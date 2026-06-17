@@ -1,0 +1,5 @@
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+semgrep==1.95.0
+# codeshield is Meta's Purple Llama package — wraps Semgrep + Insecure Code Detector.
+codeshield==1.0.1

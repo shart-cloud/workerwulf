@@ -1,0 +1,24 @@
+name = "wulf-codeshield"
+main = "src/index.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[containers]]
+class_name = "CodeshieldContainer"
+# Image pushed to CF managed registry via wrangler containers push.
+# Build: docker build -t wulf-codeshield:v1 ./container
+# Push:  wrangler containers push registry.cloudflare.com/<account>/wulf-codeshield:v1
+image = "registry.cloudflare.com/11caecd272df7dbdcc636034c25b1f1c/wulf-codeshield:v1"
+# CodeShield + Semgrep image is ~1.5 GB and Semgrep loads rule packs on first
+# scan; keep headroom on standard-1 (4 GiB).
+instance_type = "standard-1"
+max_instances = 2
+
+[[durable_objects.bindings]]
+name = "CODESHIELD"
+class_name = "CodeshieldContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CodeshieldContainer"]
