@@ -34,6 +34,14 @@ service = "wulf-worker"
 binding = "SVC_RELAY"
 service = "wulf-dynamic-parent"
 
+# Capability-binding probe W-CAP-01. Uncomment and set id to the
+# `hyperdrive_id` Terraform output after `terraform apply` (see
+# docs/wave2-hyperdrive.md). Left commented so local dev / deploy work
+# before the Hyperdrive resource exists.
+# [[hyperdrive]]
+# binding = "HYPERDRIVE"
+# id = "<terraform output hyperdrive_id>"
+
 [vars]
 WULF_ENV_PROBE = "from-wrangler-toml"
 WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"

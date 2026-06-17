@@ -42,3 +42,8 @@ output "dns_exfil_zone" {
   description = "Authoritative zone the callback host serves; encode data in subdomains."
   value       = "${var.dns_exfil_subdomain}.${var.callback_domain}"
 }
+
+output "hyperdrive_id" {
+  description = "Wire into packages/worker/wrangler.toml [[hyperdrive]].id for probe W-CAP-01."
+  value       = cloudflare_hyperdrive_config.wulf_pg.id
+}

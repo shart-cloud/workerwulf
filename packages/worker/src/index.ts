@@ -8,6 +8,9 @@ export interface Env {
   PREY_D1: D1Database;
   SVC_SELF: Fetcher;
   SVC_RELAY: Fetcher;
+  // Capability binding for W-CAP-01. Optional: present only once the
+  // [[hyperdrive]] stanza is wired (post terraform apply). Absent locally.
+  HYPERDRIVE?: Hyperdrive;
   WULF_ENV_PROBE: string;
   WULF_CALLBACK_HTTP_BASE?: string;
   WULF_DNS_EXFIL_ZONE?: string;
