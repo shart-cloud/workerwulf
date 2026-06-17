@@ -42,6 +42,13 @@ service = "wulf-dynamic-parent"
 # binding = "HYPERDRIVE"
 # id = "<terraform output hyperdrive_id>"
 
+# Capability-binding probe W-CAP-04 (Vectorize / RAG poisoning). Create the
+# index first: wrangler vectorize create wulf-embeddings --dimensions=768
+# --metric=cosine. See docs/wave3-capability-bindings.md.
+# [[vectorize]]
+# binding = "VECTORIZE"
+# index_name = "wulf-embeddings"
+
 [vars]
 WULF_ENV_PROBE = "from-wrangler-toml"
 WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"
