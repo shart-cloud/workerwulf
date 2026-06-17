@@ -1,0 +1,13 @@
+name = "tenant-prey"
+main = "src/tenant-prey.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[[kv_namespaces]]
+binding = "PREY_KV"
+id = "d300472e3aa9468395a26b8065636681"
+
+[vars]
+PREY_MARKER = "tenant-prey-customer-scope"

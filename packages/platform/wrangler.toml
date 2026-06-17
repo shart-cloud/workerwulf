@@ -1,0 +1,27 @@
+name = "wulf-dispatch"
+main = "src/dispatch.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[[dispatch_namespaces]]
+binding = "DISPATCHER"
+namespace = "wulf-tenants"
+outbound = { service = "wulf-outbound", parameters = ["customer_name", "url", "run_id", "test_id"] }
+
+# Deploy a second namespace separately for P-DISP-03/P-TEN-01 trusted-mode differentials,
+# then uncomment this binding when available.
+# [[dispatch_namespaces]]
+# binding = "DISPATCHER_TRUSTED"
+# namespace = "wulf-tenants-trusted"
+# outbound = { service = "wulf-outbound", parameters = ["customer_name", "url", "run_id", "test_id"] }
+
+[[r2_buckets]]
+binding = "OUTBOUND_LOG"
+bucket_name = "wulf-outbound-log"
+
+[vars]
+WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"
+WULF_DNS_EXFIL_ZONE = "x.wulf.shart.cloud"
+WULF_ALLOWED_TEST_URL = "https://cloudflare.com/cdn-cgi/trace"

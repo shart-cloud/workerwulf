@@ -1,0 +1,13 @@
+name = "tenant-victim"
+main = "src/tenant-victim.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = false
+
+[[kv_namespaces]]
+binding = "VICTIM_KV"
+id = "e912f89a0fc748c5b7d22d1c4f5e9530"
+
+[vars]
+VICTIM_SECRET = "flag{p-ten-03-secret-canary}"

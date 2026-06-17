@@ -1,0 +1,22 @@
+{
+  "name": "@wulf/platform",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.toml --port 8789",
+    "deploy": "wrangler deploy --config wrangler.toml",
+    "deploy:outbound": "wrangler deploy --config wrangler.outbound.toml",
+    "deploy:prey": "wrangler deploy --config wrangler.tenant-prey.toml --dispatch-namespace wulf-tenants",
+    "deploy:victim": "wrangler deploy --config wrangler.tenant-victim.toml --dispatch-namespace wulf-tenants",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@wulf/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251001.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.94.0"
+  }
+}

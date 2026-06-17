@@ -1,0 +1,47 @@
+name = "wulf-dynamic-parent"
+main = "src/index.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Worker Loader (Dynamic Workers) — beta-gated. Requires Workers Paid plan
+# and access to the dynamic-workers feature on the account.
+[[worker_loaders]]
+binding = "LOADER"
+
+# Mirror prey-worker bindings so we can verify the child cannot see them
+# unless the parent explicitly forwards them via WorkerCode.env.
+[[kv_namespaces]]
+binding = "PARENT_KV"
+id = "d300472e3aa9468395a26b8065636681"
+
+[[r2_buckets]]
+binding = "PARENT_R2"
+bucket_name = "wulf-research-findings"
+
+[[r2_buckets]]
+binding = "LOGPUSH_R2"
+bucket_name = "cloudflare-managed-523ab9fc"
+
+[[d1_databases]]
+binding = "PARENT_D1"
+database_name = "wulf-d1"
+database_id = "5f3d553e-4e2e-44a4-b1b7-2202a33cda3d"
+
+# Durable Object bindings for DO-DYN composition tests.
+# The child Dynamic Worker receives these via WorkerCode.env.
+[[durable_objects.bindings]]
+name = "CHILD_DO"
+class_name = "PreyDurableObject"
+script_name = "wulf-durable"
+
+[[durable_objects.bindings]]
+name = "CHILD_DO_SECURE"
+class_name = "PreyDurableObjectSecure"
+script_name = "wulf-durable"
+
+[vars]
+PARENT_SECRET_DECOY = "if-you-can-read-this-from-child-the-isolate-leaked"
+WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"
+WULF_DNS_EXFIL_ZONE = "x.wulf.shart.cloud"

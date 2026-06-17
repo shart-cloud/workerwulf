@@ -1,0 +1,14 @@
+name = "wulf-outbound"
+main = "src/outbound.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[[r2_buckets]]
+binding = "OUTBOUND_LOG"
+bucket_name = "wulf-outbound-log"
+
+[vars]
+WULF_OUTBOUND_ALLOWLIST = "cloudflare.com,workers.dev"
+WULF_OUTBOUND_AUTH_TOKEN = "wulf-outbound-injected-canary"
