@@ -1,0 +1,22 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+# Tokens can also be supplied via TF_VAR_* env vars; preferred for CI.
+
+cloudflare_api_token  = "REDACTED"
+cloudflare_account_id = "REDACTED"
+cloudflare_zone_id    = "REDACTED"  # zone ID for shart.cloud (or whichever parent zone)
+digitalocean_api_token = "REDACTED"
+
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+ssh_private_key_path = "~/.ssh/id_ed25519"
+admin_cidrs     = ["203.0.113.42/32"]
+callback_domain = "wulf-callback.example"
+callback_r2_access_key_id = "REDACTED"
+callback_r2_secret_access_key = "REDACTED"
+
+# Optional overrides
+# name_prefix         = "wulf"
+# do_region           = "nyc3"
+# do_droplet_size     = "s-1vcpu-1gb"
+# dns_exfil_subdomain = "x"
+# callback_log_dir    = "/var/log/wulf"
+# callback_autocert_dir = "/var/lib/wulf/autocert"

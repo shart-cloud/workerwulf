@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if ! id -u wulf >/dev/null 2>&1; then
+  useradd --system --home /var/lib/wulf --create-home --shell /usr/sbin/nologin wulf
+fi
+
+install -d -o root -g root -m 0755 /etc/wulf
+install -d -o wulf -g wulf -m 0755 /var/lib/wulf
+install -d -o wulf -g wulf -m 0755 ${callback_state_dir}
+install -d -o wulf -g wulf -m 0755 ${callback_autocert_dir}
+install -d -o wulf -g wulf -m 0755 ${callback_log_dir}
