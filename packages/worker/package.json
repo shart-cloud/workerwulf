@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^1.1.0",
     "@wulf/shared": "workspace:*",
     "postgres": "^3.4.9"
   },

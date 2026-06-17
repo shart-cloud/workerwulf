@@ -1,4 +1,5 @@
 import type { ProbeResult } from "@wulf/shared";
+import type { BrowserWorker } from "@cloudflare/puppeteer";
 import { probes } from "./probes/index.js";
 
 export interface Env {
@@ -12,6 +13,7 @@ export interface Env {
   // are wired + resources exist. Absent locally / pre-deploy.
   HYPERDRIVE?: Hyperdrive;
   VECTORIZE?: VectorizeIndex;
+  BROWSER?: BrowserWorker;
   WULF_ENV_PROBE: string;
   WULF_CALLBACK_HTTP_BASE?: string;
   WULF_DNS_EXFIL_ZONE?: string;
