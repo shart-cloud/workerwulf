@@ -90,6 +90,18 @@ Operator-misconfiguration family (tag `misconfig:compat`). Measures attack surfa
 
 ---
 
+#### 1.7 Capability-Binding Blast Radius — `misconfig`
+
+Operator-misconfiguration family (tag `misconfig:binding`). Serverless Prey's central question — "what can the credentials in this function's environment reach?" — applied to Cloudflare's capability bindings. Where `W-BND-*` *discover* bindings, this family exercises the *capability* a compromised/injected Worker gains from one.
+
+| Test ID | Description | Method | Expected |
+|---------|-------------|--------|----------|
+| W-CAP-01 | Hyperdrive binding blast radius: read DB credentials off `env.HYPERDRIVE` and exfil canary rows from the backing Postgres | Read host/user/password from the binding; connect via `postgres.js` over Hyperdrive; `SELECT` the seeded canary | **deploy-only**: `accessible`/`critical` (creds exposed + canary exfil); `blocked` locally (no binding) |
+
+> Backed by a throwaway **CloudNativePG** Postgres in the Talos cluster, routed to Hyperdrive over **Workers VPC** (the existing `cloudflared` tunnel). Infra: `infra/hyperdrive.tf` (this repo) + `talos-gitops/infrastructure/base/wulf-pg/`. The closest Cloudflare analog to "RDS creds in the Lambda env." Deploy-only — `env.HYPERDRIVE` is absent in local dev.
+
+---
+
 ### Track 2 — Dynamic Workers Sandbox Escape Testing (`prey-dynamic`)
 
 **Goal:** Probe the security boundary between a parent Worker and a dynamically-loaded child Worker executing untrusted code, testing the capability-based sandbox model.

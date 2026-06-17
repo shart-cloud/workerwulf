@@ -28,6 +28,7 @@ import { wIso03 } from "./w-iso-03.js";
 import { wIso05 } from "./w-iso-05.js";
 import { wIso06 } from "./w-iso-06.js";
 import { wCfg05 } from "./w-cfg-05.js";
+import { wCap01 } from "./w-cap-01.js";
 import { wObj01 } from "./w-obj-01.js";
 import { wObj02 } from "./w-obj-02.js";
 import { wObj03 } from "./w-obj-03.js";
@@ -93,6 +94,7 @@ export const probes: Record<string, Probe> = {
   "W-ISO-05": wIso05,
   "W-ISO-06": wIso06,
   "W-CFG-05": wCfg05,
+  "W-CAP-01": wCap01,
   "W-OBJ-01": wObj01,
   "W-OBJ-02": wObj02,
   "W-OBJ-03": wObj03,

@@ -101,3 +101,41 @@ variable "callback_autocert_dir" {
   type        = string
   default     = "/var/lib/wulf/autocert"
 }
+
+############################
+# Hyperdrive / Workers VPC (probe W-CAP-01). See hyperdrive.tf.
+############################
+
+variable "wulf_tunnel_id" {
+  description = "UUID of the existing cloudflared tunnel in the Talos cluster that the Workers VPC service routes through."
+  type        = string
+}
+
+variable "hyperdrive_pg_host" {
+  description = "Private address of the CNPG Postgres the VPC service targets, e.g. the wulf-pg-rw ClusterIP (kubectl get svc wulf-pg-rw -n wulf-pg -o jsonpath='{.spec.clusterIP}')."
+  type        = string
+}
+
+variable "hyperdrive_pg_database" {
+  description = "Database name on the backing Postgres."
+  type        = string
+  default     = "wulf"
+}
+
+variable "hyperdrive_pg_user" {
+  description = "App user for the backing Postgres (CNPG secret wulf-pg-app .username)."
+  type        = string
+  sensitive   = true
+}
+
+variable "hyperdrive_pg_password" {
+  description = "App password for the backing Postgres (CNPG secret wulf-pg-app .password)."
+  type        = string
+  sensitive   = true
+}
+
+variable "hyperdrive_cert_mode" {
+  description = "VPC service TLS verification: verify_full | verify_ca | disabled. CNPG uses a self-signed CA and custom CAs are not yet supported, so 'disabled' for this research DB."
+  type        = string
+  default     = "disabled"
+}

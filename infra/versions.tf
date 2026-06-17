@@ -3,8 +3,10 @@ terraform {
 
   required_providers {
     cloudflare = {
-      source  = "cloudflare/cloudflare"
-      version = "~> 5.0"
+      source = "cloudflare/cloudflare"
+      # >= 5.13 required for Workers VPC (cloudflare_connectivity_directory_service)
+      # used by hyperdrive.tf. Run `terraform init -upgrade` if the lock pins older.
+      version = ">= 5.13, < 6.0"
     }
     digitalocean = {
       source  = "digitalocean/digitalocean"
