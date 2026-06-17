@@ -1,0 +1,9 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+# Let llamafirewall pull its own pinned versions of transformers, torch, openai, etc.
+llamafirewall==1.0.3
+# llamafirewall 1.0.3 imports HfFolder which was removed in huggingface_hub 1.0.0.
+huggingface_hub<1.0.0
+# CPU-only torch — pin only major to stay compatible with llamafirewall's >=2.4.1.
+torch>=2.4.1

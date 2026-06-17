@@ -1,0 +1,29 @@
+name = "wulf-llamafirewall"
+main = "src/index.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# CF API token for Workers AI access (used by LlamaFirewall's AlignmentCheck
+# scanner to call the OpenAI-compatible Workers AI endpoint). Set with:
+#   cd packages/llamafirewall && wrangler secret put CF_API_TOKEN
+# Token scope: Workers AI:Read only.
+
+[[containers]]
+class_name = "LlamaFirewallContainer"
+# Build: docker build --build-arg HF_TOKEN=<hf_token> -t wulf-llamafirewall:v1 ./container
+# Push:  wrangler containers push registry.cloudflare.com/<acct>/wulf-llamafirewall:v1
+image = "registry.cloudflare.com/11caecd272df7dbdcc636034c25b1f1c/wulf-llamafirewall:v7"
+# LlamaFirewall pulls PG2 86M + Semgrep ruleset + Python deps; image is ~2 GiB.
+# standard-1 (1/2 vCPU, 4 GiB RAM) keeps comfortable headroom for the PG2
+# forward pass on top of CodeShield's Semgrep subprocess.
+instance_type = "standard-1"
+max_instances = 2
+
+[[durable_objects.bindings]]
+name = "LLAMAFIREWALL"
+class_name = "LlamaFirewallContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LlamaFirewallContainer"]
