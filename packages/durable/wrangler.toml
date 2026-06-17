@@ -1,0 +1,47 @@
+name = "wulf-durable"
+main = "src/index.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Durable Objects — Track 3 introspection targets.
+# These are SQLite-backed DOs (new_sqlite_classes) for the 10GB storage model.
+[[durable_objects.bindings]]
+name = "PREY_DO"
+class_name = "PreyDurableObject"
+
+[[durable_objects.bindings]]
+name = "PREY_DO_SECURE"
+class_name = "PreyDurableObjectSecure"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PreyDurableObject", "PreyDurableObjectSecure"]
+
+# Shared bindings for composition tests (DO-DYN-*)
+[[kv_namespaces]]
+binding = "PREY_KV"
+id = "d300472e3aa9468395a26b8065636681"
+
+[[r2_buckets]]
+binding = "PREY_R2"
+bucket_name = "wulf-research-findings"
+
+[[r2_buckets]]
+binding = "LOGPUSH_R2"
+bucket_name = "cloudflare-managed-523ab9fc"
+
+[[d1_databases]]
+binding = "PREY_D1"
+database_name = "wulf-d1"
+database_id = "5f3d553e-4e2e-44a4-b1b7-2202a33cda3d"
+
+[[services]]
+binding = "DYNAMIC_PARENT"
+service = "wulf-dynamic-parent"
+
+[vars]
+WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"
+WULF_DNS_EXFIL_ZONE = "x.wulf.shart.cloud"
+WULF_DYNAMIC_BASE_URL = "https://wulf-dynamic-parent.sharted.workers.dev"
