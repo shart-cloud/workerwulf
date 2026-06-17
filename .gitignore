@@ -9,3 +9,4 @@ results/
 
 # Local Netlify folder
 .netlify
+.terraform/
