@@ -1,0 +1,17 @@
+name = "wulf-astro"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# The Astro app under test. Point this at a running `wrangler dev` of the
+# target app in ./target (default below), or a deployed Astro Worker URL.
+# Probes fan out crafted requests to this base URL.
+[vars]
+ASTRO_TARGET_URL = "http://127.0.0.1:8788"
+
+# Optional: instead of (or in addition to) ASTRO_TARGET_URL, bind the target
+# Astro Worker directly as a service so probes hit it over a service binding.
+# [[services]]
+# binding = "ASTRO"
+# service = "wulf-astro-target"

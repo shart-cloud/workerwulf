@@ -1,0 +1,22 @@
+{
+  "name": "@wulf/astro",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "verify": "node --test verify/*.test.mjs",
+    "smuggle": "node raw/smuggle.mjs",
+    "fuzz": "node fuzz/fuzz.mjs"
+  },
+  "dependencies": {
+    "@wulf/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20251001.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.94.0"
+  }
+}

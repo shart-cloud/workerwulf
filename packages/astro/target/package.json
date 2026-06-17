@@ -1,0 +1,16 @@
+{
+  "name": "wulf-astro-target",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "comment": "System-under-test for @wulf/astro probes. Intentionally OUTSIDE the wulf pnpm workspace (packages/* only matches one level) so its Astro deps don't entangle the harness. `link:` points at the LOCAL astro checkout so we fuzz the local adapter under test — both must be built (pnpm build in each).",
+  "scripts": {
+    "build": "astro build",
+    "preview": "astro preview --port 8788",
+    "dev": "astro dev --port 8788"
+  },
+  "dependencies": {
+    "astro": "link:/home/jg/git/astro/packages/astro",
+    "@astrojs/cloudflare": "link:/home/jg/git/astro/packages/integrations/cloudflare"
+  }
+}

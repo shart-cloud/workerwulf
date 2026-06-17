@@ -1,0 +1,22 @@
+{
+  "name": "wulf-astro-netlify-ssrf-target",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "astro build",
+    "dev": "astro dev --port 4321",
+    "preview": "netlify dev --port 8790 --target-port 4321 --command 'pnpm dev'",
+    "smoke:local": "node scripts/local-smoke.mjs",
+    "trigger:remote": "node scripts/remote-trigger.mjs",
+    "deploy:draft": "netlify deploy --no-build --dir dist --functions .netlify/v1/functions --site $NETLIFY_SITE_ID",
+    "deploy:prod": "netlify deploy --prod --no-build --dir dist --functions .netlify/v1/functions --site $NETLIFY_SITE_ID"
+  },
+  "dependencies": {
+    "@astrojs/netlify": "link:/home/jg/git/astro/packages/integrations/netlify",
+    "astro": "link:/home/jg/git/astro/packages/astro"
+  },
+  "devDependencies": {
+    "netlify-cli": "^23.9.7"
+  }
+}

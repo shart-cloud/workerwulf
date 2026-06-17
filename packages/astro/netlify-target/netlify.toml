@@ -1,0 +1,12 @@
+[build]
+command = "pnpm build"
+publish = "dist"
+
+[dev]
+command = "pnpm dev"
+port = 8790
+targetPort = 4321
+
+[[edge_functions]]
+function = "middleware"
+path = "/*"

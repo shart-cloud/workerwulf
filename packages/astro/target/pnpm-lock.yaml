@@ -1,0 +1,16 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      '@astrojs/cloudflare':
+        specifier: link:/home/jg/git/astro/packages/integrations/cloudflare
+        version: link:../../../../../astro/packages/integrations/cloudflare
+      astro:
+        specifier: link:/home/jg/git/astro/packages/astro
+        version: link:../../../../../astro/packages/astro

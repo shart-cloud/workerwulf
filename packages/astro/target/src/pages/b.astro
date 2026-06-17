@@ -1,0 +1,11 @@
+---
+import IslandB from "../components/IslandB.astro";
+export const prerender = false;
+---
+<html>
+  <head><title>Island B page</title></head>
+  <body>
+    <h1>B</h1>
+    <IslandB server:defer secret="bravo-secret-value" />
+  </body>
+</html>

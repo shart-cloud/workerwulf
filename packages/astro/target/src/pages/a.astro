@@ -1,0 +1,11 @@
+---
+import IslandA from "../components/IslandA.astro";
+export const prerender = false;
+---
+<html>
+  <head><title>Island A page</title></head>
+  <body>
+    <h1>A</h1>
+    <IslandA server:defer secret="alpha-secret-value" />
+  </body>
+</html>

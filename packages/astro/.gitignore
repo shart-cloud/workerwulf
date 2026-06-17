@@ -1,0 +1,4 @@
+fuzz/crashes-*.json
+target/dist/
+target/node_modules/
+target/.astro/

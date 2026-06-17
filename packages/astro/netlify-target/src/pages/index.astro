@@ -1,0 +1,14 @@
+---
+const target = Astro.url.searchParams.get('target');
+---
+
+<html lang="en">
+  <head>
+    <title>Astro Netlify rewrite SSRF PoC</title>
+  </head>
+  <body>
+    <h1>Astro Netlify rewrite SSRF PoC</h1>
+    <p>This page is the control path. Add a <code>target</code> query parameter to exercise middleware rewrite behavior.</p>
+    <p>Current target: <code>{target ?? '(none)'}</code></p>
+  </body>
+</html>

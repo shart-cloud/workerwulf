@@ -1,0 +1,7 @@
+---
+interface Props {
+  secret?: string;
+}
+const { secret = "alpha-default" } = Astro.props;
+---
+<div data-island="A">Island A rendered with secret: {secret}</div>
