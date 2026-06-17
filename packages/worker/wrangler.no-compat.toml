@@ -1,0 +1,43 @@
+# Flag-OFF deploy variant of wulf-worker for the nodejs_compat controlled
+# experiment (W-CFG-05). Identical to wrangler.toml EXCEPT compatibility_flags
+# is empty, so the same probe set runs against an isolate with no Node.js
+# compat surface. Deploy/dev with:
+#   wrangler deploy  --config wrangler.no-compat.toml
+#   wrangler dev     --config wrangler.no-compat.toml --port 8791 --local
+# Then diff W-CFG-05 (and W-ENV/W-NET/W-RUN) between the two deploys.
+name = "wulf-worker-nocompat"
+main = "src/index.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = []
+workers_dev = true
+
+[[kv_namespaces]]
+binding = "PREY_KV"
+id = "d300472e3aa9468395a26b8065636681"
+
+[[r2_buckets]]
+binding = "PREY_R2"
+bucket_name = "wulf-research-findings"
+
+[[r2_buckets]]
+binding = "LOGPUSH_R2"
+bucket_name = "cloudflare-managed-523ab9fc"
+
+[[d1_databases]]
+binding = "PREY_D1"
+database_name = "wulf-d1"
+database_id = "5f3d553e-4e2e-44a4-b1b7-2202a33cda3d"
+
+[[services]]
+binding = "SVC_SELF"
+service = "wulf-worker-nocompat"
+
+[[services]]
+binding = "SVC_RELAY"
+service = "wulf-dynamic-parent"
+
+[vars]
+WULF_ENV_PROBE = "from-wrangler-toml"
+WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"
+WULF_DNS_EXFIL_ZONE = "x.wulf.shart.cloud"

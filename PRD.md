@@ -78,6 +78,16 @@ The project is organized into three test tracks, each producing a dedicated intr
 
 Worker-side monitoring probes are a known gap. The currently implemented monitoring probes are the Durable Object `DO-MON-01` / `DO-MON-02` / `DO-MON-03` series; do not cite phantom `W-MON-*` IDs as validation until a Worker observability probe family is actually added.
 
+#### 1.6 Configuration & Compatibility Misconfiguration — `misconfig`
+
+Operator-misconfiguration family (tag `misconfig:compat`). Measures attack surface the *developer* introduces via deploy-time configuration, independent of any platform bug.
+
+| Test ID | Description | Method | Expected |
+|---------|-------------|--------|----------|
+| W-CFG-05 | `nodejs_compat` attack-surface enumeration: which Node globals are injected, and does `process.env` mirror text bindings? | Enumerate injected globals (`Buffer`/`process`/`global`/`setImmediate`); read `process.env` for surfaced `WULF_*` vars. Run against both the default deploy and the `wrangler.no-compat.toml` variant and diff. | flag-on: `accessible`/`medium` (5 globals + 3 vars via `process.env`); flag-off: `blocked`/informational (zero surface) |
+
+> **Controlled experiment.** `packages/worker/wrangler.no-compat.toml` is an identical deploy with `compatibility_flags = []`. Empirically (local workerd, which reproduces `nodejs_compat`): flag-on injects all 5 Node globals **and** surfaces every `[vars]` entry through `process.env` — a second config/secret enumeration path that does not exist with the flag off.
+
 ---
 
 ### Track 2 — Dynamic Workers Sandbox Escape Testing (`prey-dynamic`)
