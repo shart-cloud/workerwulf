@@ -1,0 +1,5 @@
+name = "fixture-worker"
+
+[vars]
+# ok: wulf-secret-in-wrangler-vars
+PUBLIC_API_URL = "https://api.example.com"

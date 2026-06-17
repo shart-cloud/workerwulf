@@ -1,0 +1,1421 @@
+rules:
+  # ── Callback / exfil URL targets ─────────────────────────────────────────
+  - id: wulf-fetch-callback-host
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "fetch() targets a WULF callback/exfil host (callback.wulf.shart.cloud or x.wulf.shart.cloud)."
+    metadata:
+      cwe: "CWE-918: Server-Side Request Forgery"
+      wulf_category: "callback_exfil"
+    pattern-either:
+      - patterns:
+          - pattern: fetch("$URL", ...)
+          - metavariable-regex:
+              metavariable: $URL
+              regex: '.*(callback\.wulf|x\.wulf|wulf\.shart\.cloud).*'
+      - patterns:
+          - pattern: fetch("$URL")
+          - metavariable-regex:
+              metavariable: $URL
+              regex: '.*(callback\.wulf|x\.wulf|wulf\.shart\.cloud).*'
+      - patterns:
+          - pattern: fetch(`$URL`, ...)
+          - metavariable-regex:
+              metavariable: $URL
+              regex: '.*(callback\.wulf|x\.wulf|wulf\.shart\.cloud).*'
+      - patterns:
+          - pattern: fetch(`$URL`)
+          - metavariable-regex:
+              metavariable: $URL
+              regex: '.*(callback\.wulf|x\.wulf|wulf\.shart\.cloud).*'
+
+  - id: wulf-fetch-exfil-path
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "fetch() targets an /exfil/ path — likely data exfiltration."
+    metadata:
+      cwe: "CWE-200: Exposure of Sensitive Information"
+      wulf_category: "callback_exfil"
+    pattern-either:
+      - patterns:
+          - pattern: fetch("$URL", ...)
+          - metavariable-regex:
+              metavariable: $URL
+              regex: '.*/exfil/.*'
+      - patterns:
+          - pattern: fetch("$URL")
+          - metavariable-regex:
+              metavariable: $URL
+              regex: '.*/exfil/.*'
+
+  # ── Dynamic code execution ───────────────────────────────────────────────
+  - id: wulf-eval-reachable
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Dynamic code execution sink is reachable; avoid eval() and Function() in Worker code."
+    metadata:
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      wulf_smell: eval-reachable
+      family: B
+      surfaces: [durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-DYN-01, W-DYN-02]
+      severity_base: high
+      substrate: ast
+      precision_risk: low
+      source: wulf-probe-finding
+    pattern-either:
+      - pattern: eval(...)
+      - pattern: globalThis.eval(...)
+      - pattern: window.eval(...)
+      - pattern: new Function(...)
+      - pattern: Function(...)
+
+  - id: wulf-dynamic-import-url
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Dynamic import specifier is influenced by request, environment, or storage data."
+    metadata:
+      cwe: "CWE-829: Inclusion of Functionality from Untrusted Control Sphere"
+      wulf_smell: dynamic-import-url
+      family: B
+      surfaces: [durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-DYN-03]
+      severity_base: high
+      substrate: ast-taint
+      precision_risk: low
+      source: cloudflare-best-practices
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              const $SPEC = new URL($REQ.url).searchParams.get(...) ?? $FALLBACK;
+              ...
+          - pattern: import($SPEC)
+      - patterns:
+          - pattern-inside: |
+              const $SPEC = env.$KEY;
+              ...
+          - pattern: import($SPEC)
+      - patterns:
+          - pattern-inside: |
+              const $SPEC = await env.$NS.get(...);
+              ...
+          - pattern: import($SPEC)
+
+  - id: wulf-wasm-from-bytes
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "WebAssembly is compiled or instantiated from runtime-provided bytes; source-level scanners cannot inspect the payload."
+    metadata:
+      cwe: "CWE-506: Embedded Malicious Code"
+      wulf_smell: wasm-from-bytes
+      family: B
+      surfaces: [durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-WASM-01]
+      severity_base: medium
+      substrate: ast-taint
+      precision_risk: medium
+      source: prd-family-b
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              const $BYTES = await $REQ.arrayBuffer();
+              ...
+          - pattern: WebAssembly.compile($BYTES, ...)
+      - patterns:
+          - pattern-inside: |
+              const $BYTES = await $REQ.arrayBuffer();
+              ...
+          - pattern: WebAssembly.instantiate($BYTES, ...)
+      - patterns:
+          - pattern-inside: |
+              const $BYTES = env.$KEY;
+              ...
+          - pattern: WebAssembly.compile($BYTES, ...)
+      - patterns:
+          - pattern-inside: |
+              const $BYTES = env.$KEY;
+              ...
+          - pattern: WebAssembly.instantiate($BYTES, ...)
+      - patterns:
+          - pattern-inside: |
+              const $BYTES = await env.$NS.get(...);
+              ...
+          - pattern: WebAssembly.compile($BYTES, ...)
+      - patterns:
+          - pattern-inside: |
+              const $BYTES = await env.$NS.get(...);
+              ...
+          - pattern: WebAssembly.instantiate($BYTES, ...)
+
+  - id: wulf-decode-then-execute
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Decoded string flows into dynamic code execution; this is a common obfuscation path for generated or injected payloads."
+    metadata:
+      cwe: "CWE-506: Embedded Malicious Code"
+      wulf_smell: decode-then-execute
+      family: B
+      surfaces: [durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [AI-INJ-09, W-DYN-01, W-DYN-02]
+      severity_base: high
+      substrate: ast-taint
+      precision_risk: medium
+      source: wulf-probe-finding
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              const $CODE = atob(...);
+              ...
+          - pattern: eval($CODE)
+      - patterns:
+          - pattern-inside: |
+              const $CODE = atob(...);
+              ...
+          - pattern: globalThis.eval($CODE)
+      - patterns:
+          - pattern-inside: |
+              const $CODE = atob(...);
+              ...
+          - pattern: new Function($CODE)
+      - pattern: eval(atob(...))
+      - pattern: globalThis.eval(atob(...))
+      - pattern: new Function(atob(...))
+
+  # ── Binding / env enumeration ────────────────────────────────────────────
+  - id: wulf-env-enumeration
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Iterating over env bindings — likely capability enumeration."
+    metadata:
+      cwe: "CWE-200"
+      wulf_category: "binding_enum"
+    pattern-either:
+      - pattern: Object.keys(env)
+      - pattern: Object.entries(env)
+      - pattern: Object.values(env)
+      - pattern: Reflect.ownKeys(env)
+      - pattern: for (const $X in env) { ... }
+      - pattern: for (const $X of Object.keys(env)) { ... }
+
+  # ── Prototype pollution ─────────────────────────────────────────────────
+  - id: wulf-prototype-pollution
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Prototype or runtime intrinsic is monkey-patched; mutation can persist across requests in reused isolates."
+    metadata:
+      cwe: "CWE-1321: Improperly Controlled Modification of Object Prototype Attributes"
+      wulf_smell: prototype-pollution
+      family: C
+      surfaces: [worker, dynamic, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-RUN-05, W-RUN-06]
+      severity_base: high
+      substrate: ast
+      precision_risk: low
+      source: wulf-probe-finding
+    pattern-either:
+      - pattern: Object.prototype.$X = $Y
+      - pattern: $OBJ.__proto__ = $Y
+      - pattern: $OBJ["__proto__"] = $Y
+      - pattern: $OBJ.__proto__.$X = $Y
+      - pattern: globalThis.fetch = $Y
+      - pattern: globalThis.crypto = $Y
+      - pattern: Array.prototype.$METHOD = $Y
+      - pattern: Response.prototype.$METHOD = $Y
+      - pattern: Request.prototype.$METHOD = $Y
+
+  # ── Base64 decode + fetch pattern (matches evade-b64-url) ────────────────
+  - id: wulf-b64-decode-fetch
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Base64 decode flowing into fetch() — runtime-constructed URL, common exfil obfuscation."
+    metadata:
+      cwe: "CWE-506: Embedded Malicious Code"
+      wulf_category: "obfuscation"
+    pattern-either:
+      - patterns:
+          - pattern: |
+              $URL = atob(...)
+              ...
+              fetch($URL, ...)
+      - patterns:
+          - pattern: fetch(atob(...), ...)
+      - patterns:
+          - pattern: fetch(atob(...))
+
+  # ── Reading callback URL from env then fetching (matches evade-indirect) ──
+  - id: wulf-env-callback-fetch
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Reading WULF_CALLBACK env var and using it in fetch() — indirect exfil."
+    metadata:
+      cwe: "CWE-918"
+      wulf_category: "callback_exfil_indirect"
+    pattern-either:
+      - patterns:
+          - pattern: |
+              $URL = env.WULF_CALLBACK_HTTP_BASE
+              ...
+              fetch($URL + $PATH, ...)
+      - patterns:
+          - pattern: fetch(env.WULF_CALLBACK_HTTP_BASE + $X, ...)
+      - patterns:
+          - pattern: fetch(`${env.WULF_CALLBACK_HTTP_BASE}$X`, ...)
+
+  # ── Secrets & credentials ────────────────────────────────────────────────
+  - id: wulf-secret-in-logs
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Secret-like value is written to console logs; logs are a durable out-of-band exposure path."
+    metadata:
+      cwe: "CWE-532: Insertion of Sensitive Information into Log File"
+      wulf_smell: secret-in-logs
+      family: A
+      surfaces: [worker, durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [DO-MON-02, worker-logging-probe-pending, P-OBS-01-pending]
+      severity_base: medium
+      substrate: ast
+      precision_risk: medium
+      source: wulf-probe-finding
+    pattern-either:
+      - pattern: console.log(env.$KEY, ...)
+      - pattern: console.warn(env.$KEY, ...)
+      - pattern: console.error(env.$KEY, ...)
+      - pattern: console.log(..., env.$KEY, ...)
+      - pattern: console.warn(..., env.$KEY, ...)
+      - pattern: console.error(..., env.$KEY, ...)
+      - pattern: console.log(JSON.stringify(env), ...)
+      - pattern: console.warn(JSON.stringify(env), ...)
+      - pattern: console.error(JSON.stringify(env), ...)
+      - pattern: logger.info(JSON.stringify(env), ...)
+      - pattern: logger.warn(JSON.stringify(env), ...)
+      - pattern: logger.error(JSON.stringify(env), ...)
+      - pattern: logger.debug(JSON.stringify(env), ...)
+      - pattern: log.info(JSON.stringify(env), ...)
+      - pattern: log.warn(JSON.stringify(env), ...)
+      - pattern: log.error(JSON.stringify(env), ...)
+      - pattern: log.debug(JSON.stringify(env), ...)
+      - patterns:
+          - pattern-inside: |
+              const $SECRETS = env;
+              ...
+          - pattern: console.log(JSON.stringify($SECRETS), ...)
+      - patterns:
+          - pattern-inside: |
+              const $SECRETS = env;
+              ...
+          - pattern: console.warn(JSON.stringify($SECRETS), ...)
+      - patterns:
+          - pattern-inside: |
+              const $SECRETS = env;
+              ...
+          - pattern: console.error(JSON.stringify($SECRETS), ...)
+      - pattern: console.log(token, ...)
+      - pattern: console.warn(token, ...)
+      - pattern: console.error(token, ...)
+      - pattern: console.log(..., token, ...)
+      - pattern: console.warn(..., token, ...)
+      - pattern: console.error(..., token, ...)
+      - pattern: console.log({ token }, ...)
+      - pattern: console.warn({ token }, ...)
+      - pattern: console.error({ token }, ...)
+      - pattern: 'console.log({ token: $VALUE }, ...)'
+      - pattern: 'console.warn({ token: $VALUE }, ...)'
+      - pattern: 'console.error({ token: $VALUE }, ...)'
+      - pattern: logger.info(token, ...)
+      - pattern: logger.warn(token, ...)
+      - pattern: logger.error(token, ...)
+      - pattern: logger.debug(token, ...)
+      - pattern: logger.info(..., token, ...)
+      - pattern: logger.warn(..., token, ...)
+      - pattern: logger.error(..., token, ...)
+      - pattern: logger.debug(..., token, ...)
+      - pattern: logger.info({ token }, ...)
+      - pattern: logger.warn({ token }, ...)
+      - pattern: logger.error({ token }, ...)
+      - pattern: logger.debug({ token }, ...)
+      - pattern: 'logger.info({ token: $VALUE }, ...)'
+      - pattern: 'logger.warn({ token: $VALUE }, ...)'
+      - pattern: 'logger.error({ token: $VALUE }, ...)'
+      - pattern: 'logger.debug({ token: $VALUE }, ...)'
+      - pattern: log.info(token, ...)
+      - pattern: log.warn(token, ...)
+      - pattern: log.error(token, ...)
+      - pattern: log.debug(token, ...)
+      - pattern: log.info(..., token, ...)
+      - pattern: log.warn(..., token, ...)
+      - pattern: log.error(..., token, ...)
+      - pattern: log.debug(..., token, ...)
+      - pattern: log.info({ token }, ...)
+      - pattern: log.warn({ token }, ...)
+      - pattern: log.error({ token }, ...)
+      - pattern: log.debug({ token }, ...)
+      - pattern: 'log.info({ token: $VALUE }, ...)'
+      - pattern: 'log.warn({ token: $VALUE }, ...)'
+      - pattern: 'log.error({ token: $VALUE }, ...)'
+      - pattern: 'log.debug({ token: $VALUE }, ...)'
+      - pattern: console.log(secret, ...)
+      - pattern: console.warn(secret, ...)
+      - pattern: console.error(secret, ...)
+      - pattern: console.log(..., secret, ...)
+      - pattern: console.warn(..., secret, ...)
+      - pattern: console.error(..., secret, ...)
+      - pattern: console.log({ secret }, ...)
+      - pattern: console.warn({ secret }, ...)
+      - pattern: console.error({ secret }, ...)
+      - pattern: 'console.log({ secret: $VALUE }, ...)'
+      - pattern: 'console.warn({ secret: $VALUE }, ...)'
+      - pattern: 'console.error({ secret: $VALUE }, ...)'
+      - pattern: console.log(password, ...)
+      - pattern: console.warn(password, ...)
+      - pattern: console.error(password, ...)
+      - pattern: console.log(..., password, ...)
+      - pattern: console.warn(..., password, ...)
+      - pattern: console.error(..., password, ...)
+      - pattern: console.log({ password }, ...)
+      - pattern: console.warn({ password }, ...)
+      - pattern: console.error({ password }, ...)
+      - pattern: 'console.log({ password: $VALUE }, ...)'
+      - pattern: 'console.warn({ password: $VALUE }, ...)'
+      - pattern: 'console.error({ password: $VALUE }, ...)'
+      - pattern: console.log(apiKey, ...)
+      - pattern: console.warn(apiKey, ...)
+      - pattern: console.error(apiKey, ...)
+      - pattern: console.log(..., apiKey, ...)
+      - pattern: console.warn(..., apiKey, ...)
+      - pattern: console.error(..., apiKey, ...)
+      - pattern: console.log({ apiKey }, ...)
+      - pattern: console.warn({ apiKey }, ...)
+      - pattern: console.error({ apiKey }, ...)
+      - pattern: 'console.log({ apiKey: $VALUE }, ...)'
+      - pattern: 'console.warn({ apiKey: $VALUE }, ...)'
+      - pattern: 'console.error({ apiKey: $VALUE }, ...)'
+      - pattern: console.log(authorization, ...)
+      - pattern: console.warn(authorization, ...)
+      - pattern: console.error(authorization, ...)
+      - pattern: console.log(..., authorization, ...)
+      - pattern: console.warn(..., authorization, ...)
+      - pattern: console.error(..., authorization, ...)
+      - pattern: console.log({ authorization }, ...)
+      - pattern: console.warn({ authorization }, ...)
+      - pattern: console.error({ authorization }, ...)
+      - pattern: 'console.log({ authorization: $VALUE }, ...)'
+      - pattern: 'console.warn({ authorization: $VALUE }, ...)'
+      - pattern: 'console.error({ authorization: $VALUE }, ...)'
+      - pattern: console.log(cookie, ...)
+      - pattern: console.warn(cookie, ...)
+      - pattern: console.error(cookie, ...)
+      - pattern: console.log(..., cookie, ...)
+      - pattern: console.warn(..., cookie, ...)
+      - pattern: console.error(..., cookie, ...)
+      - pattern: console.log({ cookie }, ...)
+      - pattern: console.warn({ cookie }, ...)
+      - pattern: console.error({ cookie }, ...)
+      - pattern: 'console.log({ cookie: $VALUE }, ...)'
+      - pattern: 'console.warn({ cookie: $VALUE }, ...)'
+      - pattern: 'console.error({ cookie: $VALUE }, ...)'
+
+  - id: wulf-secret-in-source
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Secret-like literal is hardcoded in source; move credentials to Worker secrets or environment bindings."
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      wulf_smell: secret-in-source
+      family: A
+      surfaces: [worker, durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-ENV-02]
+      severity_base: high
+      substrate: ast
+      precision_risk: medium
+      source: prd-family-a
+    pattern-either:
+      - pattern: const token = "$VALUE"
+      - pattern: let token = "$VALUE"
+      - pattern: var token = "$VALUE"
+      - pattern: const secret = "$VALUE"
+      - pattern: let secret = "$VALUE"
+      - pattern: var secret = "$VALUE"
+      - pattern: const password = "$VALUE"
+      - pattern: let password = "$VALUE"
+      - pattern: var password = "$VALUE"
+      - pattern: const apiKey = "$VALUE"
+      - pattern: let apiKey = "$VALUE"
+      - pattern: var apiKey = "$VALUE"
+      - pattern: const privateKey = "$VALUE"
+      - pattern: let privateKey = "$VALUE"
+      - pattern: var privateKey = "$VALUE"
+      - pattern: const bearer = "$VALUE"
+      - pattern: let bearer = "$VALUE"
+      - pattern: var bearer = "$VALUE"
+      - pattern: 'token: "$VALUE"'
+      - pattern: 'secret: "$VALUE"'
+      - pattern: 'password: "$VALUE"'
+      - pattern: 'apiKey: "$VALUE"'
+      - pattern: 'privateKey: "$VALUE"'
+      - pattern: 'bearer: "$VALUE"'
+
+  - id: wulf-secret-in-wrangler-vars
+    languages: [generic]
+    severity: ERROR
+    message: "Secret-like literal appears in Wrangler vars; use `wrangler secret` instead of committing credentials to config."
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      wulf_smell: secret-in-source
+      family: A
+      surfaces: [worker, durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-ENV-02]
+      severity_base: high
+      substrate: config-lint
+      precision_risk: medium
+      source: cloudflare-best-practices
+    paths:
+      include:
+        - "*wrangler*.toml"
+        - "**/*wrangler*.toml"
+    patterns:
+      - pattern-regex: '(?im)^\s*[A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD|API_KEY|PRIVATE_KEY|BEARER)[A-Z0-9_]*\s*=\s*".{6,}"'
+      - pattern-not-regex: '(?im)^\s*[A-Z0-9_]*(?:FIELD|NAME|EXAMPLE)[A-Z0-9_]*\s*=\s*"(?:password|secret|token|apiKey|example)"'
+
+  - id: wulf-hardcoded-conn-string
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Hardcoded database/cache connection string with inline credentials; use Worker secrets, Hyperdrive, or environment bindings."
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      wulf_smell: hardcoded-connection-string
+      family: A
+      surfaces: [worker, durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-ENV-02]
+      severity_base: high
+      substrate: ast
+      precision_risk: low
+      source: cloudflare-best-practices
+    patterns:
+      - pattern-regex: '"(?:postgres(?:ql)?|mysql)://[^"\s:@]+:[^"\s@]+@[^"\s]+"|"redis://:[^"\s@]+@[^"\s]+"'
+      - pattern-not-regex: '"(?:postgres(?:ql)?|mysql)://user:pass@example\.com/[^"\s]+"'
+
+  - id: wulf-cf-api-token-in-worker
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Worker code calls the Cloudflare API with a bearer API token; prefer narrower bindings or split control-plane credentials out of request-facing code."
+    metadata:
+      cwe: "CWE-522: Insufficiently Protected Credentials"
+      wulf_smell: cf-api-token-in-worker
+      family: A
+      surfaces: [worker, durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-BND-01]
+      severity_base: high
+      substrate: ast
+      precision_risk: low
+      source: wulf-probe-finding
+    pattern-either:
+      - patterns:
+          - pattern: 'fetch($URL, { headers: { Authorization: `Bearer ${env.CF_API_TOKEN}`, ... }, ... })'
+          - metavariable-regex:
+              metavariable: $URL
+              regex: '^"https://api\.cloudflare\.com/'
+      - patterns:
+          - pattern-inside: |
+              const $URL = $CF_URL;
+              ...
+          - pattern: 'fetch($URL, { headers: { Authorization: `Bearer ${env.CF_API_TOKEN}`, ... }, ... })'
+          - metavariable-regex:
+              metavariable: $CF_URL
+              regex: '^"https://api\.cloudflare\.com/'
+      - patterns:
+          - pattern: 'fetch($URL, { headers: { Authorization: "Bearer " + env.CF_API_TOKEN, ... }, ... })'
+          - metavariable-regex:
+              metavariable: $URL
+              regex: '^"https://api\.cloudflare\.com/'
+      - patterns:
+          - pattern-inside: |
+              const $URL = $CF_URL;
+              ...
+          - pattern: 'fetch($URL, { headers: { Authorization: "Bearer " + env.CF_API_TOKEN, ... }, ... })'
+          - metavariable-regex:
+              metavariable: $CF_URL
+              regex: '^"https://api\.cloudflare\.com/'
+      - patterns:
+          - pattern-inside: |
+              const $TOKEN = env.CF_API_TOKEN;
+              ...
+          - pattern: 'fetch($URL, { headers: { Authorization: `Bearer ${$TOKEN}`, ... }, ... })'
+          - metavariable-regex:
+              metavariable: $URL
+              regex: '^"https://api\.cloudflare\.com/'
+      - patterns:
+          - pattern-inside: |
+              const $URL = $CF_URL;
+              ...
+          - pattern-inside: |
+              const $TOKEN = env.CF_API_TOKEN;
+              ...
+          - pattern: 'fetch($URL, { headers: { Authorization: `Bearer ${$TOKEN}`, ... }, ... })'
+          - metavariable-regex:
+              metavariable: $CF_URL
+              regex: '^"https://api\.cloudflare\.com/'
+      - patterns:
+          - pattern-inside: |
+              const $TOKEN = env.CF_API_TOKEN;
+              ...
+          - pattern: 'fetch($URL, { headers: { Authorization: "Bearer " + $TOKEN, ... }, ... })'
+          - metavariable-regex:
+              metavariable: $URL
+              regex: '^"https://api\.cloudflare\.com/'
+      - patterns:
+          - pattern-inside: |
+              const $URL = $CF_URL;
+              ...
+          - pattern-inside: |
+              const $TOKEN = env.CF_API_TOKEN;
+              ...
+          - pattern: 'fetch($URL, { headers: { Authorization: "Bearer " + $TOKEN, ... }, ... })'
+          - metavariable-regex:
+              metavariable: $CF_URL
+              regex: '^"https://api\.cloudflare\.com/'
+
+  # ── Crypto & comparison ──────────────────────────────────────────────────
+  - id: wulf-insecure-random
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Math.random() is used to generate a security-sensitive value; use crypto.getRandomValues() instead."
+    metadata:
+      cwe: "CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator"
+      wulf_smell: insecure-random
+      family: D
+      surfaces: [worker, durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-CRY-03]
+      severity_base: high
+      substrate: ast
+      precision_risk: medium
+      source: cloudflare-best-practices
+    pattern-either:
+      - patterns:
+          - pattern: const $NAME = Math.random(...)
+          - metavariable-regex:
+              metavariable: $NAME
+              regex: '(?i).*(token|secret|key|nonce|session|csrf|auth|password|signature|hmac|id).*'
+      - patterns:
+          - pattern: const $NAME = Math.random(...).$METHOD(...)
+          - metavariable-regex:
+              metavariable: $NAME
+              regex: '(?i).*(token|secret|key|nonce|session|csrf|auth|password|signature|hmac|id).*'
+      - patterns:
+          - pattern: const $NAME = Math.random(...).$METHOD(...).$METHOD2(...)
+          - metavariable-regex:
+              metavariable: $NAME
+              regex: '(?i).*(token|secret|key|nonce|session|csrf|auth|password|signature|hmac|id).*'
+      - patterns:
+          - pattern: let $NAME = Math.random(...)
+          - metavariable-regex:
+              metavariable: $NAME
+              regex: '(?i).*(token|secret|key|nonce|session|csrf|auth|password|signature|hmac|id).*'
+      - patterns:
+          - pattern: var $NAME = Math.random(...)
+          - metavariable-regex:
+              metavariable: $NAME
+              regex: '(?i).*(token|secret|key|nonce|session|csrf|auth|password|signature|hmac|id).*'
+      - patterns:
+          - pattern: $OBJ.$NAME = Math.random(...)
+          - metavariable-regex:
+              metavariable: $NAME
+              regex: '(?i).*(token|secret|key|nonce|session|csrf|auth|password|signature|hmac|id).*'
+      - patterns:
+          - pattern: '$NAME: Math.random(...)'
+          - metavariable-regex:
+              metavariable: $NAME
+              regex: '(?i).*(token|secret|key|nonce|session|csrf|auth|password|signature|hmac|id).*'
+
+  - id: wulf-non-constant-compare
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Secret-like values are compared with ===/!==; use crypto.subtle.timingSafeEqual() for secret comparison."
+    metadata:
+      cwe: "CWE-208: Observable Timing Discrepancy"
+      wulf_smell: non-constant-compare
+      family: D
+      surfaces: [worker, durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [timing-probe-pending]
+      severity_base: medium
+      substrate: ast
+      precision_risk: medium
+      source: cloudflare-best-practices
+    pattern-either:
+      - patterns:
+          - pattern: $LEFT === $RIGHT
+          - metavariable-regex:
+              metavariable: $LEFT
+              regex: '(?i).*(token|secret|signature|hmac|apiKey|password|auth|bearer|csrf).*'
+      - patterns:
+          - pattern: $LEFT === $RIGHT
+          - metavariable-regex:
+              metavariable: $RIGHT
+              regex: '(?i).*(token|secret|signature|hmac|apiKey|password|auth|bearer|csrf).*'
+      - patterns:
+          - pattern: $LEFT !== $RIGHT
+          - metavariable-regex:
+              metavariable: $LEFT
+              regex: '(?i).*(token|secret|signature|hmac|apiKey|password|auth|bearer|csrf).*'
+      - patterns:
+          - pattern: $LEFT !== $RIGHT
+          - metavariable-regex:
+              metavariable: $RIGHT
+              regex: '(?i).*(token|secret|signature|hmac|apiKey|password|auth|bearer|csrf).*'
+
+  # ── Boundary returns & fail-open ──────────────────────────────────────────
+  - id: wulf-env-in-response
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Worker env bindings reach a Response or RPC return; response/RPC paths bypass outbound egress controls."
+    metadata:
+      cwe: "CWE-200: Exposure of Sensitive Information"
+      wulf_smell: env-in-response
+      family: E
+      surfaces: [dynamic, durable, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [D-NET-03, P-OUT-05-pending]
+      severity_base: high
+      substrate: ast
+      precision_risk: medium
+      source: wulf-probe-finding
+    pattern-either:
+      - pattern: new Response(JSON.stringify(env), ...)
+      - pattern: Response.json(env, ...)
+      - pattern: Response.json({ ...env }, ...)
+      - pattern: Response.json({ ...this.env }, ...)
+      - pattern: return env
+      - pattern: return { ...env }
+      - pattern: return { ...this.env }
+      - pattern: return JSON.stringify(env)
+      - patterns:
+          - pattern-inside: |
+              const $ENV = env;
+              ...
+          - pattern: new Response(JSON.stringify($ENV), ...)
+      - patterns:
+          - pattern-inside: |
+              const $ENV = env;
+              ...
+          - pattern: Response.json($ENV, ...)
+      - patterns:
+          - pattern-inside: |
+              const $ENV = env;
+              ...
+          - pattern: return $ENV
+
+  - id: wulf-error-in-response
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Error details are returned to the caller; stack/message content can expose internals or secrets."
+    metadata:
+      cwe: "CWE-209: Generation of Error Message Containing Sensitive Information"
+      wulf_smell: error-in-response
+      family: E
+      surfaces: [dynamic, durable, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-ERR-01, P-OUT-05-pending]
+      severity_base: medium
+      substrate: ast
+      precision_risk: medium
+      source: wulf-probe-finding
+    pattern-either:
+      - pattern: new Response($ERR.message, ...)
+      - pattern: new Response($ERR.stack, ...)
+      - pattern: new Response(String($ERR), ...)
+      - pattern: 'Response.json({ error: $ERR.message }, ...)'
+      - pattern: 'Response.json({ error: $ERR.stack }, ...)'
+      - pattern: return $ERR.message
+      - pattern: return $ERR.stack
+      - pattern: return String($ERR)
+
+  - id: wulf-passthrough-onexception
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "ctx.passThroughOnException() fails open to origin when the Worker throws."
+    metadata:
+      cwe: "CWE-636: Not Failing Securely"
+      wulf_smell: passthrough-onexception
+      family: E
+      surfaces: [worker, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [fail-open-probe-pending]
+      severity_base: medium
+      substrate: ast
+      precision_risk: low
+      source: cloudflare-best-practices
+    pattern-either:
+      - pattern: ctx.passThroughOnException()
+      - pattern: $CTX.passThroughOnException()
+
+  - id: wulf-sensitive-in-cache
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Secret-like data is written to caches.default; cache storage can persist across invocations and isolate recycles."
+    metadata:
+      cwe: "CWE-524: Use of Cache Containing Sensitive Information"
+      wulf_smell: sensitive-in-cache
+      family: E
+      surfaces: [worker, durable]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-CACHE-01, W-CACHE-02]
+      severity_base: medium
+      substrate: ast
+      precision_risk: medium
+      source: wulf-probe-finding
+    pattern-either:
+      - pattern: caches.default.put($KEY, new Response(env.$SECRET, ...), ...)
+      - pattern: caches.default.put($KEY, new Response(JSON.stringify(env), ...), ...)
+      - patterns:
+          - pattern: caches.default.put($KEY, new Response($VALUE, ...), ...)
+          - metavariable-regex:
+              metavariable: $VALUE
+              regex: '(?i).*(token|secret|password|apiKey|authorization|cookie|bearer).*'
+      - patterns:
+          - pattern-inside: |
+              const $VALUE = env.$SECRET;
+              ...
+          - pattern: caches.default.put($KEY, new Response($VALUE, ...), ...)
+
+  # ── Concurrency & resource governance ────────────────────────────────────
+  - id: wulf-blockconcurrency-across-io
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "blockConcurrencyWhile() callback performs non-storage I/O; this can hold the DO concurrency gate across attacker-controlled latency."
+    metadata:
+      cwe: "CWE-400: Uncontrolled Resource Consumption"
+      wulf_smell: blockconcurrency-across-io
+      family: F
+      surfaces: [durable, worker, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [AI-INJ-06, do-contention-probe-pending]
+      severity_base: medium
+      substrate: ast
+      precision_risk: low
+      source: cloudflare-best-practices
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              $CTX.blockConcurrencyWhile(async (...) => {
+                ...
+              })
+          - pattern: await fetch(...)
+      - patterns:
+          - pattern-inside: |
+              await $CTX.blockConcurrencyWhile(async (...) => {
+                ...
+              })
+          - pattern: await fetch(...)
+      - patterns:
+          - pattern-inside: |
+              $CTX.blockConcurrencyWhile(async (...) => {
+                ...
+              })
+          - pattern: await env.$BINDING.get(...)
+      - patterns:
+          - pattern-inside: |
+              $CTX.blockConcurrencyWhile(async (...) => {
+                ...
+              })
+          - pattern: await env.$BINDING.put(...)
+
+  - id: wulf-unbounded-body-read
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Request body is fully buffered without an apparent size guard; large bodies can force memory exhaustion."
+    metadata:
+      cwe: "CWE-400: Uncontrolled Resource Consumption"
+      wulf_smell: unbounded-body-read
+      family: F
+      surfaces: [worker, durable, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-ERR-03]
+      severity_base: medium
+      substrate: ast
+      precision_risk: medium
+      source: wulf-probe-finding
+    pattern-either:
+      - patterns:
+          - pattern: await $REQ.text()
+          - pattern-not-inside: |
+              const $LEN = Number($REQ.headers.get("content-length") ?? "0");
+              ...
+          - pattern-not-inside: |
+              const $LEN = parseInt($REQ.headers.get("content-length") ?? "0", 10);
+              ...
+      - patterns:
+          - pattern: await $REQ.arrayBuffer()
+          - pattern-not-inside: |
+              const $LEN = Number($REQ.headers.get("content-length") ?? "0");
+              ...
+          - pattern-not-inside: |
+              const $LEN = parseInt($REQ.headers.get("content-length") ?? "0", 10);
+              ...
+      - patterns:
+          - pattern: await $REQ.json()
+          - pattern-not-inside: |
+              const $LEN = Number($REQ.headers.get("content-length") ?? "0");
+              ...
+          - pattern-not-inside: |
+              const $LEN = parseInt($REQ.headers.get("content-length") ?? "0", 10);
+              ...
+      - patterns:
+          - pattern: await $REQ.formData()
+          - pattern-not-inside: |
+              const $LEN = Number($REQ.headers.get("content-length") ?? "0");
+              ...
+          - pattern-not-inside: |
+              const $LEN = parseInt($REQ.headers.get("content-length") ?? "0", 10);
+              ...
+
+  - id: wulf-do-toctou
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Durable Object state is read, external I/O is awaited, then state is written without an apparent transaction/CAS guard."
+    metadata:
+      cwe: "CWE-367: Time-of-check Time-of-use Race Condition"
+      wulf_smell: do-toctou
+      family: F
+      surfaces: [durable, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [do-race-probe-pending]
+      severity_base: medium
+      substrate: ast
+      precision_risk: high
+      source: cloudflare-best-practices
+    pattern-either:
+      - pattern-regex: 'this\.ctx\.storage\.get(?:<[^>]+>)?\([^)]*\)[\s\S]*await\s+fetch\([\s\S]*this\.ctx\.storage\.put\('
+      - patterns:
+          - pattern: |
+              const $VALUE = await this.ctx.storage.get(...);
+              ...
+              await fetch(...);
+              ...
+              await this.ctx.storage.put(...);
+          - pattern-not-inside: |
+              this.ctx.storage.transaction(async (...) => {
+                ...
+              })
+      - patterns:
+          - pattern: |
+              await this.ctx.storage.get(...);
+              ...
+              await fetch(...);
+              ...
+              await this.ctx.storage.put(...);
+          - pattern-not-inside: |
+              this.ctx.storage.transaction(async (...) => {
+                ...
+              })
+      - patterns:
+          - pattern: |
+              const $VALUE = this.ctx.storage.sql.exec(...).one();
+              ...
+              await fetch(...);
+              ...
+              this.ctx.storage.sql.exec(...);
+          - pattern-not-inside: |
+              this.ctx.storage.transaction(async (...) => {
+                ...
+              })
+
+  # ── Data remanence & deletion ────────────────────────────────────────────
+  - id: wulf-incomplete-do-deletion
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "User-facing delete/reset path performs partial Durable Object deletion without deleteAll(); data or metadata may remain."
+    metadata:
+      cwe: "CWE-459: Incomplete Cleanup"
+      wulf_smell: incomplete-do-deletion
+      family: H
+      surfaces: [durable, worker]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [DO-SQ3-04, deletion-completeness-probe-pending]
+      severity_base: medium
+      substrate: ast
+      precision_risk: medium
+      source: cloudflare-best-practices
+    pattern-either:
+      - patterns:
+          - pattern: await this.ctx.storage.delete(...)
+          - pattern-not-inside: |
+              $METHOD(...) {
+                ...
+                await this.ctx.storage.deleteAll(...);
+                ...
+              }
+      - patterns:
+          - pattern-regex: 'this\.ctx\.storage\.sql\.exec\(["'']DROP TABLE\s+'
+          - pattern-not-inside: |
+              $METHOD(...) {
+                ...
+                await this.ctx.storage.deleteAll(...);
+                ...
+              }
+      - patterns:
+          - pattern-regex: 'this\.ctx\.storage\.sql\.exec\(["'']DELETE FROM\s+'
+          - pattern-not-inside: |
+              $METHOD(...) {
+                ...
+                await this.ctx.storage.deleteAll(...);
+                ...
+              }
+
+  - id: wulf-orphaned-alarm-on-delete
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Durable Object deleteAll() runs without deleteAlarm(); pre-2026-02-24 compatibility can leave a deleted object waking by alarm."
+    metadata:
+      cwe: "CWE-459: Incomplete Cleanup"
+      wulf_smell: orphaned-alarm-on-delete
+      family: H
+      surfaces: [durable]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [DO-DYN-05]
+      severity_base: medium
+      substrate: ast-config
+      precision_risk: low
+      source: cloudflare-best-practices
+    patterns:
+      - pattern: await this.ctx.storage.deleteAll(...)
+      - pattern-not-inside: |
+          await this.ctx.storage.deleteAlarm(...);
+          ...
+          await this.ctx.storage.deleteAll(...)
+
+  - id: wulf-destructive-do-migration
+    languages: [generic]
+    severity: INFO
+    message: "Wrangler migration deleted_classes removes Durable Object data; verify this is intentional and recoverable."
+    metadata:
+      cwe: "CWE-459: Incomplete Cleanup"
+      wulf_smell: destructive-do-migration
+      family: H
+      surfaces: [durable]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [probe-not-required]
+      severity_base: low
+      substrate: config-lint
+      precision_risk: low
+      source: cloudflare-best-practices
+    paths:
+      include:
+        - "*wrangler*.toml"
+        - "**/*wrangler*.toml"
+    patterns:
+      - pattern-regex: '(?im)^\s*deleted_classes\s*='
+
+  # ── Probe-backed Workerwulf corpus rules ─────────────────────────────────
+  - id: wulf-sql-exec-concat
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "User-controlled value appears to reach runtime-constructed SQL in sql.exec(); use parameterized bindings."
+    metadata:
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
+      wulf_smell: sql-injection
+      family: B
+      surfaces: [durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [DO-SQL-01, DO-SQL-02, DO-SQL-03, DO-SQL-04, DO-SQL-05]
+      severity_base: high
+      substrate: ast-taint
+      precision_risk: low
+      source: wulf-probe-finding
+    pattern-either:
+      - patterns:
+          - pattern: $SQL.exec(`...${$SOURCE}...`, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern: $SQL.exec("..." + $SOURCE, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern: $SQL.exec("..." + $SOURCE + "...", ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern: $SQL.exec($SOURCE + "...", ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern: $SQL.exec('...' + $SOURCE, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern: $SQL.exec('...' + $SOURCE + '...', ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern: $SQL.exec($SOURCE + '...', ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern-inside: |
+              const $QUERY = `...${$SOURCE}...`;
+              ...
+          - pattern: $SQL.exec($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern-inside: |
+              let $QUERY = `...${$SOURCE}...`;
+              ...
+          - pattern: $SQL.exec($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern-inside: |
+              const $QUERY = "..." + $SOURCE;
+              ...
+          - pattern: $SQL.exec($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern-inside: |
+              const $QUERY = "..." + $SOURCE + "...";
+              ...
+          - pattern: $SQL.exec($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern-inside: |
+              let $QUERY = "..." + $SOURCE;
+              ...
+          - pattern: $SQL.exec($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern-inside: |
+              let $QUERY = "..." + $SOURCE + "...";
+              ...
+          - pattern: $SQL.exec($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern-inside: |
+              const $QUERY = '...' + $SOURCE;
+              ...
+          - pattern: $SQL.exec($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern-inside: |
+              const $QUERY = '...' + $SOURCE + '...';
+              ...
+          - pattern: $SQL.exec($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern-inside: |
+              let $QUERY = '...' + $SOURCE;
+              ...
+          - pattern: $SQL.exec($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+      - patterns:
+          - pattern-inside: |
+              let $QUERY = '...' + $SOURCE + '...';
+              ...
+          - pattern: $SQL.exec($QUERY, ...)
+          - metavariable-regex:
+              metavariable: $SOURCE
+              regex: '^(input|username|userInput|body|payload|id)$'
+
+  - id: wulf-sql-exec-dynamic-identifier
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Dynamic SQLite statement reaches sql.exec(); parameter binding cannot protect identifiers, pragmas, or file/extension names."
+    metadata:
+      cwe: "CWE-89: Improper Neutralization of Special Elements used in an SQL Command"
+      wulf_smell: dynamic-sql-identifier
+      family: B
+      surfaces: [durable, dynamic, ai, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [DO-SQ3-01, DO-SQ3-02, DO-SQ3-03, DO-SQ3-05, DO-SQ3-06]
+      severity_base: medium
+      substrate: ast
+      precision_risk: medium
+      source: wulf-probe-finding
+    pattern-either:
+      - pattern: $SQL.exec(`PRAGMA ${$X}`)
+      - pattern: $SQL.exec(`ATTACH DATABASE '${$X}' AS $ALIAS`)
+      - pattern: $SQL.exec(`ATTACH DATABASE '${$X}' AS attached`)
+      - pattern: $SQL.exec(`SELECT load_extension('${$X}')`)
+      - pattern: $SQL.exec(`SELECT writefile('${$X}', ...)`)
+      - pattern: $SQL.exec(`SELECT writefile('${$X}', '...')`)
+      - pattern: $SQL.exec(`SELECT readfile('${$X}') AS $ALIAS`)
+      - pattern: $SQL.exec(`SELECT readfile('${$X}') AS content`)
+
+  - id: wulf-module-scope-mutable-cache
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: "Module-scope mutable cache is written during request handling; cached data can persist across reused isolates."
+    metadata:
+      cwe: "CWE-488: Exposure of Data Element to Wrong Session"
+      wulf_smell: module-scope-mutable-cache
+      family: C
+      surfaces: [worker, dynamic, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-RUN-04]
+      severity_base: medium
+      substrate: ast
+      precision_risk: high
+      source: cloudflare-best-practices
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              const $CACHE = new Map(...);
+              ...
+          - pattern-inside: |
+              export default {
+                fetch($REQ) {
+                  ...
+                },
+              };
+          - pattern: $CACHE.set(...)
+          - metavariable-regex:
+              metavariable: $CACHE
+              regex: '^(cache|memo|store|mutableCache)$'
+      - patterns:
+          - pattern-inside: |
+              const $CACHE = [];
+              ...
+          - pattern-inside: |
+              export default {
+                fetch($REQ) {
+                  ...
+                },
+              };
+          - pattern: $CACHE.push(...)
+          - metavariable-regex:
+              metavariable: $CACHE
+              regex: '^(cache|memo|store|mutableCache)$'
+      - patterns:
+          - pattern-inside: |
+              const $CACHE: Record<$K, $V> = {};
+              ...
+          - pattern-inside: |
+              export default {
+                fetch($REQ) {
+                  ...
+                },
+              };
+          - pattern: $CACHE[$KEY] = $VALUE
+          - metavariable-regex:
+              metavariable: $CACHE
+              regex: '^(cache|memo|store|mutableCache)$'
+
+  - id: wulf-global-request-state
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: "Module-scope mutable state is written during request handling; this can retain cross-request data in reused isolates."
+    metadata:
+      cwe: "CWE-488: Exposure of Data Element to Wrong Session"
+      wulf_smell: cross-request-state
+      family: C
+      surfaces: [worker, dynamic, platform]
+      trust_context: [first-party, loaded-untrusted, ai-generated, multi-tenant]
+      validated_by: [W-RUN-01, W-RUN-03, W-RUN-04]
+      severity_base: high
+      substrate: ast-taint
+      precision_risk: medium
+      source: wulf-probe-finding
+    pattern-either:
+      - patterns:
+          - pattern-inside: |
+              let $STATE = $INIT;
+              ...
+          - pattern-inside: |
+              export const $HANDLER: Probe = async ($ARGS) => {
+                ...
+              };
+          - pattern: |
+              const $VALUE = req.headers.get(...);
+              ...
+              $STATE = $VALUE;
+      - patterns:
+          - pattern-inside: |
+              let $STATE = $INIT;
+              ...
+          - pattern-inside: |
+              export const $HANDLER: Probe = async ($ARGS) => {
+                ...
+              };
+          - pattern: |
+              const $VALUE = req.headers.get(...) ?? $FALLBACK;
+              ...
+              $STATE = $VALUE;
+      - patterns:
+          - pattern-inside: |
+              let $STATE = $INIT;
+              ...
+          - pattern-inside: |
+              export default {
+                fetch($REQ) {
+                  ...
+                },
+              };
+          - pattern: |
+              const $VALUE = req.headers.get(...);
+              ...
+              $STATE = $VALUE;
+      - patterns:
+          - pattern-inside: |
+              let $STATE = $INIT;
+              ...
+          - pattern-inside: |
+              export default {
+                fetch($REQ) {
+                  ...
+                },
+              };
+          - pattern: |
+              const $VALUE = req.headers.get(...) ?? $FALLBACK;
+              ...
+              $STATE = $VALUE;
+      - patterns:
+          - pattern-inside: |
+              let $STATE = $INIT;
+              ...
+          - pattern-inside: |
+              export default {
+                async fetch($REQ) {
+                  ...
+                },
+              };
+          - pattern: |
+              const $VALUE = await req.text();
+              ...
+              $STATE = $VALUE;
+      - patterns:
+          - pattern-inside: |
+              let $STATE = $INIT;
+              ...
+          - pattern-inside: |
+              export default {
+                fetch($REQ) {
+                  ...
+                },
+              };
+          - pattern: |
+              const $VALUE = req.cf;
+              ...
+              $STATE = $VALUE;
+      - patterns:
+          - pattern-inside: |
+              const $STATE = [];
+              ...
+          - pattern-inside: |
+              export const $HANDLER: Probe = async ($ARGS) => {
+                ...
+              };
+          - pattern: |
+              const $VALUE = req.headers.get(...);
+              ...
+              $STATE.push($VALUE);
+      - patterns:
+          - pattern-inside: |
+              const $STATE = [];
+              ...
+          - pattern-inside: |
+              export const $HANDLER: Probe = async ($ARGS) => {
+                ...
+              };
+          - pattern: |
+              const $VALUE = req.headers.get(...) ?? $FALLBACK;
+              ...
+              $STATE.push($VALUE);
+      - patterns:
+          - pattern-inside: |
+              const $STATE = [];
+              ...
+          - pattern-inside: |
+              export default {
+                fetch($REQ) {
+                  ...
+                },
+              };
+          - pattern: |
+              const $VALUE = new URL(req.url).searchParams.get(...) ?? $FALLBACK;
+              ...
+              $STATE.push($VALUE);
+      - patterns:
+          - pattern-inside: |
+              const $STATE = new Map(...);
+              ...
+          - pattern-inside: |
+              export const $HANDLER: Probe = async ($ARGS) => {
+                ...
+              };
+          - pattern: |
+              const $VALUE = req.headers.get(...);
+              ...
+              $STATE.set($KEY, $VALUE);
+      - patterns:
+          - pattern-inside: |
+              const $STATE = new Map(...);
+              ...
+          - pattern-inside: |
+              export default {
+                fetch($REQ) {
+                  ...
+                },
+              };
+          - pattern: |
+              const $VALUE = req.headers.get(...) ?? $FALLBACK;
+              ...
+              $STATE.set($KEY, $VALUE);
+      - patterns:
+          - pattern-inside: |
+              const $STATE = {};
+              ...
+          - pattern-inside: |
+              export const $HANDLER: Probe = async ($ARGS) => {
+                ...
+              };
+          - pattern: |
+              const $VALUE = req.headers.get(...);
+              ...
+              $STATE[$KEY] = $VALUE;
+      - patterns:
+          - pattern-inside: |
+              const $STATE = {};
+              ...
+          - pattern-inside: |
+              export default {
+                fetch($REQ) {
+                  ...
+                },
+              };
+          - pattern: |
+              const $VALUE = req.headers.get(...) ?? $FALLBACK;
+              ...
+              $STATE[$KEY] = $VALUE;

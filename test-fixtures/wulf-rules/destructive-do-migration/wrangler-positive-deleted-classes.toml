@@ -1,0 +1,6 @@
+name = "fixture"
+
+[[migrations]]
+tag = "v2"
+# ruleid: wulf-destructive-do-migration
+deleted_classes = ["OldObject"]

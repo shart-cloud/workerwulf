@@ -1,0 +1,5 @@
+name = "fixture-worker"
+
+[vars]
+# ok: wulf-secret-in-wrangler-vars
+PASSWORD_FIELD_NAME = "password"

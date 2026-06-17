@@ -1,0 +1,6 @@
+name = "fixture"
+
+[[migrations]]
+tag = "v1"
+# ok: wulf-destructive-do-migration
+new_sqlite_classes = ["NewObject"]

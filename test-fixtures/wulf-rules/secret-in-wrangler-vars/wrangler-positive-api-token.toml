@@ -1,0 +1,5 @@
+name = "fixture-worker"
+
+[vars]
+# ruleid: wulf-secret-in-wrangler-vars
+API_TOKEN = "sk_live_51N7Yw2ExampleHardcodedSecret"

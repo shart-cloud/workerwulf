@@ -1,0 +1,13 @@
+{
+  "description": "Example policy consumed by future Family G binding-graph checks.",
+  "privilegedBindings": ["PREY_KV", "PREY_R2", "PREY_D1", "PREY_DO", "CF_API_TOKEN"],
+  "childBindingAllowlist": {
+    "LOADER": ["WULF_CALLBACK_HTTP_BASE"]
+  },
+  "dispatchNamespaces": {
+    "DISPATCH": {
+      "trustedWorkersAllowed": false,
+      "outboundRequired": true
+    }
+  }
+}

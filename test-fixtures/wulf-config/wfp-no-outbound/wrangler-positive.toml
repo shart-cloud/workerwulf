@@ -1,0 +1,7 @@
+name = "platform-fixture"
+
+# ruleid: wulf-wfp-no-outbound
+[[dispatch_namespaces]]
+binding = "DISPATCH"
+namespace = "tenants"
+trusted_workers = false
