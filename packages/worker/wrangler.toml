@@ -49,6 +49,11 @@ service = "wulf-dynamic-parent"
 # binding = "VECTORIZE"
 # index_name = "wulf-embeddings"
 
+# Capability-binding probe W-CAP-05 (Browser Rendering / SSRF-with-a-browser).
+# Account-level binding; no resource to create. See docs/wave3-capability-bindings.md.
+# [browser]
+# binding = "BROWSER"
+
 [vars]
 WULF_ENV_PROBE = "from-wrangler-toml"
 WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"

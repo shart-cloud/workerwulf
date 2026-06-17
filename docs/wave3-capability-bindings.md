@@ -24,11 +24,21 @@ Expected: `accessible`/`high` with `can_write`+`can_read` true. The poison vecto
 persists (Vectorize indexing is async, so an immediate `getByIds` read-back may be
 empty — capability is proven by the calls succeeding).
 
-## W-CAP-05 — Browser Rendering (SSRF-with-a-browser) — PLANNED
+## W-CAP-05 — Browser Rendering (SSRF-with-a-browser) — IMPLEMENTED
 
 A Browser Rendering binding lets a Worker drive a headless Chromium to fetch and
-render arbitrary URLs — a powerful SSRF/exfil primitive. Needs the `browser`
-binding + `@cloudflare/puppeteer`. To be implemented next.
+render arbitrary URLs — a stronger SSRF/exfil primitive than `fetch()` (JS exec,
+redirects, screenshots from CF egress). Account-level binding, no resource to create.
+
+```bash
+# 1. Uncomment the [browser] stanza in packages/worker/wrangler.toml
+# 2. Deploy + run (pass ?target=<url>; defaults to https://example.com/)
+pnpm --filter @wulf/worker deploy
+cd packages/harness && pnpm start run --test W-CAP-05 --base-url https://wulf-worker.<subdomain>.workers.dev
+```
+Expected: `accessible`/`high` with `http_status`/`page_title`/`content_preview`
+populated. Point `?target=` at an internal/metadata endpoint to demonstrate SSRF
+reach. Uses `@cloudflare/puppeteer` (bundles cleanly under nodejs_compat).
 
 ## W-CAP-03 — send_email — NEEDS A DISCLOSURE DECISION FIRST
 
