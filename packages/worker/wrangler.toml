@@ -54,6 +54,14 @@ service = "wulf-dynamic-parent"
 # [browser]
 # binding = "BROWSER"
 
+# Capability-binding probe W-CAP-03 (send_email). destination_address PINS
+# delivery to one verified researcher-owned address (the safeguard). Also set
+# WULF_EMAIL_FROM (verified domain) + WULF_EMAIL_TO (= destination_address) in
+# [vars]. See docs/wave3-capability-bindings.md.
+# [[send_email]]
+# name = "SEND_EMAIL"
+# destination_address = "you@yourdomain.example"
+
 [vars]
 WULF_ENV_PROBE = "from-wrangler-toml"
 WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"
