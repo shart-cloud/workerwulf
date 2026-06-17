@@ -25,6 +25,8 @@ import { wNet04 } from "./w-net-04.js";
 import { wNet05 } from "./w-net-05.js";
 import { wNet06 } from "./w-net-06.js";
 import { wIso03 } from "./w-iso-03.js";
+import { wIso05 } from "./w-iso-05.js";
+import { wIso06 } from "./w-iso-06.js";
 import { wObj01 } from "./w-obj-01.js";
 import { wObj02 } from "./w-obj-02.js";
 import { wObj03 } from "./w-obj-03.js";
@@ -87,6 +89,8 @@ export const probes: Record<string, Probe> = {
   "W-NET-05": wNet05,
   "W-NET-06": wNet06,
   "W-ISO-03": wIso03,
+  "W-ISO-05": wIso05,
+  "W-ISO-06": wIso06,
   "W-OBJ-01": wObj01,
   "W-OBJ-02": wObj02,
   "W-OBJ-03": wObj03,

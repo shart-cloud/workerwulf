@@ -71,6 +71,8 @@ The project is organized into three test tracks, each producing a dedicated intr
 | W-ISO-02 | Attempt to observe co-tenant activity via timing | Repeated timing measurements under load vs. idle |
 | W-ISO-03 | Test for SharedArrayBuffer / high-resolution timer availability | Direct construction attempts |
 | W-ISO-04 | Probe CPU time limits and what happens at eviction boundary | Long-running computation, observe termination behavior |
+| W-ISO-05 | Measure timer resolution — does the clock advance / expose sub-ms precision during pure compute? | Tight-loop sampling of `Date.now()` / `performance.now()`; three-state verdict (clamped / coarse / sub-ms). **Production-only verdict — local `wrangler dev` uses the host OS clock.** |
+| W-ISO-06 | Counter-based clock amplification — can a busy-loop timer be calibrated despite clamped clocks? | Spin a counter until the real clock ticks within one synchronous turn; report spins-per-ms or "no calibration possible". **Production-only verdict.** |
 
 #### 1.5 Monitoring & Detection Surface
 
