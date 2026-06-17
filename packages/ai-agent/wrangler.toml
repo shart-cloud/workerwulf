@@ -1,0 +1,56 @@
+name = "wulf-ai-agent"
+main = "src/index.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[ai]
+binding = "AI"
+
+# Worker Loader (Dynamic Workers)
+[[worker_loaders]]
+binding = "LOADER"
+
+# Mirror prey-worker bindings
+[[kv_namespaces]]
+binding = "PREY_KV"
+id = "d300472e3aa9468395a26b8065636681"
+
+[[r2_buckets]]
+binding = "PREY_R2"
+bucket_name = "wulf-research-findings"
+
+[[r2_buckets]]
+binding = "LOGPUSH_R2"
+bucket_name = "cloudflare-managed-523ab9fc"
+
+[[d1_databases]]
+binding = "PREY_D1"
+database_name = "wulf-d1"
+database_id = "5f3d553e-4e2e-44a4-b1b7-2202a33cda3d"
+
+# Durable Object bindings for DO-DYN composition tests
+[[durable_objects.bindings]]
+name = "PREY_DO"
+class_name = "PreyDurableObject"
+script_name = "wulf-durable"
+
+[[durable_objects.bindings]]
+name = "PREY_DO_SECURE"
+class_name = "PreyDurableObjectSecure"
+script_name = "wulf-durable"
+
+# Prompt Guard 2 container (Llama Prompt Guard 2 86M) — kept as baseline control for AI-INJ-13
+[[services]]
+binding = "PROMPT_GUARD"
+service = "wulf-prompt-guard"
+
+# LlamaFirewall (PG2 + CodeShield + WulfRegex + AlignmentCheck) — unified defense for AI-INJ-13
+[[services]]
+binding = "LLAMAFIREWALL"
+service = "wulf-llamafirewall"
+
+[vars]
+WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"
+WULF_DNS_EXFIL_ZONE = "x.wulf.shart.cloud"
