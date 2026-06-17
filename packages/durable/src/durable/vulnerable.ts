@@ -92,6 +92,15 @@ export class PreyDurableObject implements DurableObject {
         return this.pitrAbuse();
       case "raw-schema":
         return this.rawSchema();
+      case "idor-put": {
+        const key = url.searchParams.get("key") ?? "";
+        const val = url.searchParams.get("val") ?? "";
+        return this.idorPut(key, val);
+      }
+      case "idor-get": {
+        const key = url.searchParams.get("key") ?? "";
+        return this.idorGet(key);
+      }
       default:
         throw new Error(`unknown cmd: ${cmd}`);
     }
@@ -294,6 +303,42 @@ export class PreyDurableObject implements DurableObject {
     return {
       pitr_api_accessible: false,
       note: "PITR is exposed via Cloudflare REST API, not sql.exec",
+    };
+  }
+
+  // ---------- Per-instance private store (DO-IDOR-* addressing tests) ----------
+  //
+  // Parameterized ON PURPOSE. These routes model a real app pattern — a Durable
+  // Object that holds one principal's private data, selected by the DO *name*
+  // (e.g. `account-1000`). The security property under test in DO-IDOR-* is
+  // whether that name is guessable, NOT query safety, so we keep these bindings
+  // parameterized to isolate the addressing/IDOR variable from SQL injection.
+
+  private idorPut(key: string, val: string): unknown {
+    this.sql.exec(
+      "CREATE TABLE IF NOT EXISTS idor_secrets (key TEXT PRIMARY KEY, val TEXT)",
+    );
+    this.sql.exec(
+      "INSERT OR REPLACE INTO idor_secrets (key, val) VALUES (?, ?)",
+      key,
+      val,
+    );
+    return { stored: true, key };
+  }
+
+  private idorGet(key: string): unknown {
+    this.sql.exec(
+      "CREATE TABLE IF NOT EXISTS idor_secrets (key TEXT PRIMARY KEY, val TEXT)",
+    );
+    const cursor = this.sql.exec(
+      "SELECT val FROM idor_secrets WHERE key = ?",
+      key,
+    );
+    const rows = [...cursor];
+    return {
+      key,
+      found: rows.length > 0,
+      val: (rows[0]?.val as string | undefined) ?? null,
     };
   }
 

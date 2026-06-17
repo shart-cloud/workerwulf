@@ -23,6 +23,13 @@ export interface ProbeResult {
   severity: "informational" | "low" | "medium" | "high" | "critical";
   comparison?: Partial<Record<ComparisonPlatform, string>>;
   run_id?: string;
+  /**
+   * Cross-cutting classification tags, orthogonal to `track`. Used to slice the
+   * findings report along themes that span tracks — notably `"misconfig"` for
+   * the operator-misconfiguration probes (with optional sub-tags like
+   * `"misconfig:idor"`, `"misconfig:binding"`, `"misconfig:secret"`).
+   */
+  tags?: string[];
 }
 
 export interface ProbeRequest {

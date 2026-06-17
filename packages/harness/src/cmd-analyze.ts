@@ -32,6 +32,8 @@ export async function cmdAnalyze(argv: string[]): Promise<void> {
   await conn.run("DELETE FROM probes WHERE test_id IS NULL");
   await conn.run("ALTER TABLE probes ADD COLUMN IF NOT EXISTS error VARCHAR");
   await conn.run("ALTER TABLE probes ADD COLUMN IF NOT EXISTS message VARCHAR");
+  // `tags` may be absent entirely if no probe in the result set carries it.
+  await conn.run("ALTER TABLE probes ADD COLUMN IF NOT EXISTS tags VARCHAR[]");
   await conn.run(`
     UPDATE probes
     SET run_id = regexp_extract(_file, '/([^/]+)/[^/]+\\.json$', 1)
@@ -121,6 +123,25 @@ export async function cmdAnalyze(argv: string[]): Promise<void> {
      GROUP BY run_id ORDER BY ended DESC`,
   );
 
+  // Cross-cutting "misconfig" slice: probes tagged with the operator-
+  // misconfiguration theme, regardless of which track they live in.
+  const misconfig = await rows(
+    conn,
+    `WITH ranked AS (
+       SELECT test_id, track, result, severity, description, tags,
+              ROW_NUMBER() OVER (PARTITION BY test_id ORDER BY timestamp DESC) AS rk
+       FROM probes ${where}
+     )
+     SELECT test_id, track, result, severity, description,
+            array_to_string(tags, ', ') AS tags
+     FROM ranked
+     WHERE rk = 1 AND tags IS NOT NULL AND list_contains(tags, 'misconfig')
+     ORDER BY
+       CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2
+                     WHEN 'low' THEN 3 ELSE 4 END,
+       track, test_id`,
+  );
+
   const aiModelRows = await rows(
     conn,
     `SELECT test_id,
@@ -160,6 +181,7 @@ export async function cmdAnalyze(argv: string[]): Promise<void> {
     latest,
     comparison,
     runs,
+    misconfig,
     aiModelSummary: aiModelRows,
     qualityWarnings: qualityWarnings.filter((r) => r.warning),
   });
@@ -197,6 +219,7 @@ function renderMarkdown(d: {
   latest: Row[];
   comparison: Row[];
   runs: Row[];
+  misconfig?: Row[];
   aiModelSummary?: Row[];
   qualityWarnings?: Row[];
 }): string {
@@ -246,6 +269,21 @@ function renderMarkdown(d: {
     ),
   );
   lines.push("");
+  if (d.misconfig && d.misconfig.length > 0) {
+    lines.push("## Misconfiguration findings (cross-cutting)");
+    lines.push("");
+    lines.push(
+      "Probes tagged `misconfig` study operator misconfiguration — the developer-created blast radius, independent of any platform bug. This slice spans tracks.",
+    );
+    lines.push("");
+    lines.push(
+      table(
+        ["test_id", "track", "result", "severity", "tags", "description"],
+        d.misconfig,
+      ),
+    );
+    lines.push("");
+  }
   if (d.aiModelSummary && d.aiModelSummary.length > 0) {
     lines.push("## AI Model Injection Comparison");
     lines.push("");

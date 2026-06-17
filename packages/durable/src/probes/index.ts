@@ -22,6 +22,9 @@ import { doDyn05 } from "./do-dyn-05.js";
 import { doMon01 } from "./do-mon-01.js";
 import { doMon02 } from "./do-mon-02.js";
 import { doMon03 } from "./do-mon-03.js";
+import { doIdor01 } from "./do-idor-01.js";
+import { doIdor02 } from "./do-idor-02.js";
+import { doIdor03 } from "./do-idor-03.js";
 
 export interface ProbeCtx {
   env: Env;
@@ -55,4 +58,7 @@ export const probes: Record<string, Probe> = {
   "DO-MON-01": doMon01,
   "DO-MON-02": doMon02,
   "DO-MON-03": doMon03,
+  "DO-IDOR-01": doIdor01,
+  "DO-IDOR-02": doIdor02,
+  "DO-IDOR-03": doIdor03,
 };
