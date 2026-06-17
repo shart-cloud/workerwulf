@@ -171,6 +171,16 @@ Worker-side monitoring probes are a known gap. The currently implemented monitor
 | DO-MON-02 | Test whether storage anomalies (mass writes, schema changes) trigger alerts | Rapidly create tables, insert bulk data |
 | DO-MON-03 | Document available logging for DO SQL operations | Map Logpush / Analytics Engine coverage |
 
+#### 3.5 Durable Object Addressing (IDOR) — `misconfig`
+
+Operator-misconfiguration family (tag `misconfig:idor`). A Durable Object's identity is derived from the name passed to `idFromName(name)`; if an application names per-principal objects with a guessable scheme, the name is the only access control. Distinct from `DO-DYN-03` (sandbox-origin cross-object reach) and `P-TEN-04` (cross-tenant reach): this family isolates single-namespace **name guessability** and its mitigations. Uses a parameterized per-instance store route (`idor-put`/`idor-get`) on `PreyDurableObject` so the variable under test is the *name*, not query safety.
+
+| Test ID | Description | Method | Expected |
+|---------|-------------|--------|----------|
+| DO-IDOR-01 | Guessable `idFromName("account-N")` lets an attacker enumerate and read other accounts' private objects | Seed canaries into sequential-named DOs; enumerate the range with no prior handle | `accessible` / `high` |
+| DO-IDOR-02 | Control: a `newUniqueId()` object is unreachable by guessing names | Store in an opaque-id DO; attempt to reach it via `idFromName()` guesses | `blocked` / `informational` (secure baseline) |
+| DO-IDOR-03 | Nuance: `idFromName()` is deterministic/offline-precomputable, so safety is purely a function of name entropy | Confirm determinism; show a 128-bit-random name resists the DO-IDOR-01 enumeration | `informational` / `medium` |
+
 ---
 
 ## 4. Architecture & Infrastructure

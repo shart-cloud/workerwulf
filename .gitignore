@@ -10,3 +10,6 @@ results/
 # Local Netlify folder
 .netlify
 .terraform/
+
+# Scratch state from the /threat-model skill
+.threat-model-state/
