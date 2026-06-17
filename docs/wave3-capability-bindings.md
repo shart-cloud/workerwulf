@@ -40,13 +40,23 @@ Expected: `accessible`/`high` with `http_status`/`page_title`/`content_preview`
 populated. Point `?target=` at an internal/metadata endpoint to demonstrate SSRF
 reach. Uses `@cloudflare/puppeteer` (bundles cleanly under nodejs_compat).
 
-## W-CAP-03 — send_email — NEEDS A DISCLOSURE DECISION FIRST
+## W-CAP-03 — send_email (exfil/phishing channel) — IMPLEMENTED
 
 A `send_email` binding turns a compromised Worker into a phishing/exfil channel.
-**This sends real email from your domain.** For a HackerOne/SANS-framed project,
-decide before building:
-- Target **only** a researcher-owned, verified destination address.
-- Keep payloads benign (a canary marker), never spoof third parties.
-- Or skip it and document the capability without exercising it.
+Built with the responsible posture: delivery is **pinned to one researcher-owned
+verified address** via the binding's `destination_address` (the platform enforces
+this), the payload is a **benign canary**, and no third party is targeted or spoofed.
 
-Not implemented pending that decision.
+```bash
+# 1. Email Routing verified on your domain; destination address verified.
+# 2. Uncomment the [[send_email]] stanza in packages/worker/wrangler.toml and set
+#    destination_address to your verified address. Add to [vars]:
+#      WULF_EMAIL_FROM = "wulf@<your-verified-domain>"
+#      WULF_EMAIL_TO   = "<= destination_address>"
+# 3. Deploy + run
+pnpm --filter @wulf/worker deploy
+cd packages/harness && pnpm start run --test W-CAP-03 --base-url https://wulf-worker.<subdomain>.workers.dev
+```
+Expected: `accessible`/`high` with `sent: true`; a canary email
+(`flag{w-cap-03-send-email-canary}`) arrives at the pinned address. If the vars
+aren't set, the probe returns `partial` without sending.

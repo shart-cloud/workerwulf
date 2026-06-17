@@ -14,6 +14,11 @@ export interface Env {
   HYPERDRIVE?: Hyperdrive;
   VECTORIZE?: VectorizeIndex;
   BROWSER?: BrowserWorker;
+  SEND_EMAIL?: SendEmail;
+  // From/To for W-CAP-03. `to` must equal the binding's verified
+  // destination_address; `from` must be on an Email-Routing-verified domain.
+  WULF_EMAIL_FROM?: string;
+  WULF_EMAIL_TO?: string;
   WULF_ENV_PROBE: string;
   WULF_CALLBACK_HTTP_BASE?: string;
   WULF_DNS_EXFIL_ZONE?: string;
