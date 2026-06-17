@@ -1,0 +1,19 @@
+{
+  "name": "wulf",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@10.32.0",
+  "scripts": {
+    "dev": "pnpm --filter @wulf/worker dev",
+    "harness": "pnpm --filter @wulf/harness run start",
+    "rules:sync": "node scripts/sync-wulf-rules.mjs",
+    "rules:check-sync": "node scripts/sync-wulf-rules.mjs --check",
+    "rules:check": "pnpm rules:check-sync && pnpm rules:test && pnpm rules:config && pnpm rules:scan",
+    "rules:config": "node scripts/check-wulf-config.mjs",
+    "rules:scan": "node scripts/scan-wulf-rules.mjs",
+    "rules:test": "node scripts/check-wulf-rules.mjs",
+    "typecheck": "pnpm -r typecheck",
+    "callbackd:plan": "terraform -chdir=infra plan",
+    "callbackd:apply": "terraform -chdir=infra apply"
+  }
+}

@@ -1,0 +1,11 @@
+.envrc
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+results/
+*.log
+.DS_Store
+
+# Local Netlify folder
+.netlify
