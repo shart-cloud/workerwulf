@@ -1,0 +1,24 @@
+name = "wulf-prompt-guard"
+main = "src/index.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[containers]]
+class_name = "PromptGuardContainer"
+# Image is pre-built locally with: docker build --build-arg HF_TOKEN=... -t wulf-prompt-guard:latest ./container
+# (wrangler doesn't forward --build-arg, and PG2 is a gated model.)
+image = "registry.cloudflare.com/11caecd272df7dbdcc636034c25b1f1c/wulf-prompt-guard:v1"
+# standard-1 (1/2 vCPU, 4 GiB RAM, 8 GB disk) — `basic` is too tight for
+# PyTorch + transformers + DeBERTa-86M weights; the model alone is ~350 MB
+# and torch's runtime allocator can blow past 1 GiB during first forward pass.
+instance_type = "standard-1"
+max_instances = 2
+
+[[durable_objects.bindings]]
+name = "PROMPT_GUARD"
+class_name = "PromptGuardContainer"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["PromptGuardContainer"]
