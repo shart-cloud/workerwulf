@@ -10,5 +10,5 @@ binding = "OUTBOUND_LOG"
 bucket_name = "wulf-outbound-log"
 
 [vars]
-WULF_OUTBOUND_ALLOWLIST = "cloudflare.com,workers.dev"
+WULF_OUTBOUND_ALLOWLIST = "cloudflare.com,workers.dev,shart.cloud"
 WULF_OUTBOUND_AUTH_TOKEN = "wulf-outbound-injected-canary"
