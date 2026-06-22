@@ -1,4 +1,3 @@
-import puppeteer from "@cloudflare/puppeteer";
 import type { Probe } from "./index.js";
 import { base } from "./_helpers.js";
 
@@ -42,6 +41,10 @@ export const wCap05: Probe = async ({ env, req, runId }) => {
   let rendered = false;
 
   try {
+    // Lazy import: defers `@cloudflare/puppeteer` (and its node:* deps) from
+    // module-eval to first probe call, trimming the main worker's cold-start.
+    // (Does NOT make the no-compat variant buildable — wrangler bundles the chunk.)
+    const { default: puppeteer } = await import("@cloudflare/puppeteer");
     const browser = await puppeteer.launch(browserBinding);
     try {
       const page = await browser.newPage();

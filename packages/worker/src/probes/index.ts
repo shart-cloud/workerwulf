@@ -29,9 +29,14 @@ import { wIso05 } from "./w-iso-05.js";
 import { wIso06 } from "./w-iso-06.js";
 import { wCfg05 } from "./w-cfg-05.js";
 import { wCap01 } from "./w-cap-01.js";
-import { wCap04 } from "./w-cap-04.js";
+import { wCap02 } from "./w-cap-02.js";
 import { wCap03 } from "./w-cap-03.js";
+import { wCap04 } from "./w-cap-04.js";
 import { wCap05 } from "./w-cap-05.js";
+import { wCap06 } from "./w-cap-06.js";
+import { wCap07 } from "./w-cap-07.js";
+import { wCap08 } from "./w-cap-08.js";
+import { wCap09 } from "./w-cap-09.js";
 import { wObj01 } from "./w-obj-01.js";
 import { wObj02 } from "./w-obj-02.js";
 import { wObj03 } from "./w-obj-03.js";
@@ -98,9 +103,14 @@ export const probes: Record<string, Probe> = {
   "W-ISO-06": wIso06,
   "W-CFG-05": wCfg05,
   "W-CAP-01": wCap01,
+  "W-CAP-02": wCap02,
   "W-CAP-03": wCap03,
   "W-CAP-04": wCap04,
   "W-CAP-05": wCap05,
+  "W-CAP-06": wCap06,
+  "W-CAP-07": wCap07,
+  "W-CAP-08": wCap08,
+  "W-CAP-09": wCap09,
   "W-OBJ-01": wObj01,
   "W-OBJ-02": wObj02,
   "W-OBJ-03": wObj03,

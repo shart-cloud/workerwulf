@@ -1,4 +1,3 @@
-import postgres from "postgres";
 import type { Probe } from "./index.js";
 import { base } from "./_helpers.js";
 
@@ -49,6 +48,10 @@ export const wCap01: Probe = async ({ env, runId }) => {
   let error: string | null = null;
   let canaryExfiltrated = false;
   try {
+    // Lazy import: defers `postgres` (and its node:* deps) from module-eval to
+    // first probe call, trimming the main worker's cold-start. (Does NOT make the
+    // no-compat variant buildable — wrangler still bundles the lazy chunk.)
+    const { default: postgres } = await import("postgres");
     const sql = postgres(hd.connectionString, {
       max: 5,
       fetch_types: false,

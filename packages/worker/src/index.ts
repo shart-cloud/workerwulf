@@ -15,6 +15,12 @@ export interface Env {
   VECTORIZE?: VectorizeIndex;
   BROWSER?: BrowserWorker;
   SEND_EMAIL?: SendEmail;
+  // Wave 4 capability bindings (W-CAP-02/06/07/08).
+  SECRET?: SecretsStoreSecret;
+  PREY_QUEUE?: Queue;
+  MTLS_FETCHER?: Fetcher;
+  AE?: AnalyticsEngineDataset;
+  AI?: Ai;
   // From/To for W-CAP-03. `to` must equal the binding's verified
   // destination_address; `from` must be on an Email-Routing-verified domain.
   WULF_EMAIL_FROM?: string;
