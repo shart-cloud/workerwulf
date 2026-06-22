@@ -27,7 +27,7 @@ export async function runAgent(
   const { runAiAgent } = await import("../agent.js");
   const globalOutbound = (overrides.globalOutbound ?? "null") as "open" | "null";
   const promptTier = (overrides.promptTier ?? "naive") as AiAgentRunParams["promptTier"];
-  const model = overrides.model ?? "@cf/meta/llama-3.1-8b-instruct";
+  const model = overrides.model ?? "@cf/meta/llama-3.1-8b-instruct-fp8";
 
   return runAiAgent(env, {
     task: overrides.task ?? "",
@@ -53,7 +53,7 @@ export function chatAgent(
       const { runAiAgent } = await import("../agent.js");
       return runAiAgent(env, {
         task,
-        model: baseOverrides.model ?? "@cf/meta/llama-3.1-8b-instruct",
+        model: baseOverrides.model ?? "@cf/meta/llama-3.1-8b-instruct-fp8",
         promptTier: (baseOverrides.promptTier ?? "naive") as AiAgentRunParams["promptTier"],
         globalOutbound: (baseOverrides.globalOutbound ?? "null") as "open" | "null",
         conversationId: runId,

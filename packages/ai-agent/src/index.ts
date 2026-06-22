@@ -112,7 +112,7 @@ async function handleAgent(req: Request, env: Env, ctx: ExecutionContext): Promi
   const runId = body.run_id ?? url.searchParams.get("run_id") ?? crypto.randomUUID();
   const promptTier = (body.prompt_tier ?? url.searchParams.get("prompt_tier") ?? "naive") as AiAgentRunParams["promptTier"];
   const globalOutbound = (body.global_outbound ?? url.searchParams.get("global_outbound") ?? "null") as AiAgentRunParams["globalOutbound"];
-  const model = body.model ?? url.searchParams.get("model") ?? "@cf/meta/llama-3.1-8b-instruct";
+  const model = body.model ?? url.searchParams.get("model") ?? "@cf/meta/llama-3.1-8b-instruct-fp8";
   const conversationId = body.conversation_id ?? url.searchParams.get("conversation_id") ?? runId;
   const turn = body.turn ?? parseInt(url.searchParams.get("turn") ?? "1", 10);
   const params = body.params ?? {};

@@ -12,7 +12,7 @@ usage:
   wulf run --all
   wulf run --test W-NET-02
   wulf run --track worker
-  wulf run --track ai --model @cf/meta/llama-3.1-8b-instruct --prompt-tier hardened
+  wulf run --track ai --model @cf/meta/llama-3.1-8b-instruct-fp8 --prompt-tier hardened
   wulf run --track platform --namespace untrusted
   wulf analyze --results-dir results [--output report.md]
 
@@ -23,7 +23,7 @@ run flags:
   --base-url <url>            override target (default http://127.0.0.1:8787)
   --output <dir>              results dir (default ./results)
   --run-id <id>               pin a run id (default: random uuid)
-  --model <model>             AI model override (default: @cf/meta/llama-3.1-8b-instruct)
+  --model <model>             AI model override (default: @cf/meta/llama-3.1-8b-instruct-fp8)
   --prompt-tier <tier>        AI prompt tier: naive|basic|hardened|defense
   --global-outbound <mode>    AI sandbox globalOutbound: open|null
   --namespace <mode>          Platform namespace mode: untrusted|trusted|both

@@ -2,7 +2,7 @@ import type { Probe } from "./index.js";
 import { base, runAgent } from "./_helpers.js";
 
 const MODELS = [
-  "@cf/meta/llama-3.1-8b-instruct",
+  "@cf/meta/llama-3.1-8b-instruct-fp8",
   "@cf/mistralai/mistral-small-3.1-24b-instruct",
   "@cf/google/gemma-3-12b-it",
   "@cf/qwen/qwen3-30b-a3b",
