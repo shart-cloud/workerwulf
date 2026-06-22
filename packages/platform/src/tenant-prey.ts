@@ -26,6 +26,9 @@ export default {
       if (cmd === "cache-read") return json(await cacheRead(required(url, "key")));
       if (cmd === "cache-write") return json(await cacheWrite(required(url, "key"), url.searchParams.get("value") ?? preyMarker));
       if (cmd === "binding-access") return json(await bindingAccess(env));
+      if (cmd === "do-reach") return json(await doReach(env));
+      if (cmd === "amplify") return json(amplify(env));
+      if (cmd === "echo-fetch") return json(await echoFetch(required(url, "target")));
       if (cmd === "isolate-marker") return json({ own_marker: preyMarker, foreign_marker_observed: false });
       return json({ ok: false, error: "unknown_cmd", cmd }, 404);
     } catch (err) {
@@ -182,6 +185,79 @@ async function bindingAccess(env: Env): Promise<Record<string, unknown>> {
     reads.VICTIM_KV = await maybeKv.get("secret-doc");
   }
   return { ok: true, prey_env_keys: Object.keys(env).sort(), victim_binding_guess_attempts: attempts, victim_bindings_present: seen, victim_reads: reads };
+}
+
+// P-TEN-04: attempt to reach a sibling tenant's Durable Object. Enumerate env for
+// any DurableObjectNamespace-shaped binding (idFromName + get), construct an id for
+// the victim's DO, and try to read its canary. With no victim-DO binding in prey's
+// scope the namespace is unaddressable → all false.
+async function doReach(env: Env): Promise<Record<string, unknown>> {
+  const candidates = Object.keys(env).filter((k) => {
+    const v = env[k] as { idFromName?: unknown; get?: unknown } | undefined;
+    return Boolean(v) && typeof v === "object" && typeof v?.idFromName === "function" && typeof v?.get === "function";
+  });
+  const attempts: Record<string, unknown>[] = [];
+  let idConstruction = false;
+  let canaryRead = false;
+  for (const name of candidates) {
+    const ns = env[name] as { idFromName: (n: string) => unknown; get: (id: unknown) => { fetch: (r: string) => Promise<Response> } };
+    try {
+      const id = ns.idFromName("tenant-victim-do");
+      idConstruction = true;
+      const stub = ns.get(id);
+      const res = await stub.fetch("https://do.wulf.invalid/canary");
+      const text = await res.text();
+      if (text.includes("flag{p-ten-04")) canaryRead = true;
+      attempts.push({ binding: name, constructed: true, status: res.status, body_prefix: text.slice(0, 120) });
+    } catch (err) {
+      attempts.push({ binding: name, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+  return { ok: true, do_namespace_bindings: candidates, id_construction_possible: idConstruction, do_canary_read: canaryRead, attempts };
+}
+
+// P-LIM-03: probe for ways to defer/fan-out work outside the per-invocation budget —
+// DO alarms, Queue producers, or a secondary dispatch binding. None present in prey's
+// scope means per-invocation limits also bound total tenant consumption.
+function amplify(env: Env): Record<string, unknown> {
+  const doBindings = Object.keys(env).filter((k) => {
+    const v = env[k] as { idFromName?: unknown } | undefined;
+    return Boolean(v) && typeof v === "object" && typeof v?.idFromName === "function";
+  });
+  const queueBindings = Object.keys(env).filter((k) => {
+    const v = env[k] as { send?: unknown } | undefined;
+    return Boolean(v) && typeof v === "object" && typeof v?.send === "function";
+  });
+  const dispatchBindings = Object.keys(env).filter((k) => {
+    const v = env[k] as { get?: unknown } | undefined;
+    return Boolean(v) && typeof v === "object" && typeof v?.get === "function" && /DISPATCH/i.test(k);
+  });
+  const alarm = doBindings.length > 0;
+  const queue = queueBindings.length > 0;
+  const dispatch = dispatchBindings.length > 0;
+  return {
+    ok: true,
+    alarm_scheduling_available: alarm,
+    queue_enqueue_available: queue,
+    secondary_dispatch_available: dispatch,
+    off_budget_work_achieved: alarm || queue || dispatch,
+    do_bindings: doBindings,
+    queue_bindings: queueBindings,
+    dispatch_bindings: dispatchBindings,
+  };
+}
+
+// P-CAP-03: fetch an (allowlisted) upstream and return its full response body. If the
+// upstream reflects request headers, the operator-injected Authorization header added
+// by wulf-outbound becomes visible to this user Worker.
+async function echoFetch(target: string): Promise<Record<string, unknown>> {
+  try {
+    const res = await fetch(target);
+    const text = await res.text();
+    return { ok: true, reachable: res.ok, status: res.status, body: text.slice(0, 2000) };
+  } catch (err) {
+    return { ok: true, reachable: false, error: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 function required(url: URL, key: string): string {
