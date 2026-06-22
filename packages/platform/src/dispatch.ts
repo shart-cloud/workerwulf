@@ -8,6 +8,7 @@ export interface Env {
   WULF_CALLBACK_HTTP_BASE?: string;
   WULF_DNS_EXFIL_ZONE?: string;
   WULF_ALLOWED_TEST_URL?: string;
+  WULF_CAP03_UPSTREAM?: string;
   [key: string]: unknown;
 }
 
