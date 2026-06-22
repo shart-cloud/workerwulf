@@ -1,5 +1,5 @@
 import type { Probe } from "./index.js";
-import { base, invokeTenant, namespaceMode, callbackTarget, checkCallback } from "./_helpers.js";
+import { base, invokeTenant, namespaceMode, checkCallback } from "./_helpers.js";
 
 // The inert credential wulf-outbound injects (see wrangler.outbound.toml
 // WULF_OUTBOUND_AUTH_TOKEN). Recovering it proves the user Worker can read it back.
@@ -23,7 +23,11 @@ const INJECTED_TOKEN = "wulf-outbound-injected-canary";
 export const pCap03: Probe = async (c) => {
   const mode = namespaceMode(c.req);
   const since = new Date(Date.now() - 5000).toISOString();
-  const target = callbackTarget(c, "P-CAP-03");
+  // Logging upstream under the allowlisted x.wulf.shart.cloud zone (NOT
+  // callback.wulf.shart.cloud, which the P-OUT-* exfil controls need kept blocked).
+  const upstream = c.env.WULF_CAP03_UPSTREAM ?? "http://relay.x.wulf.shart.cloud";
+  const nonce = crypto.randomUUID().slice(0, 8);
+  const target = `${upstream}/cap03?track=platform&test_id=P-CAP-03&run_id=${encodeURIComponent(c.runId)}&nonce=${nonce}`;
 
   // Prey fetches the logging upstream through the outbound Worker (which injects auth).
   const fetchResp = await invokeTenant<Record<string, unknown>>(c, "tenant-prey", "echo-fetch", { target }, { mode });

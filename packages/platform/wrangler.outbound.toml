@@ -10,5 +10,8 @@ binding = "OUTBOUND_LOG"
 bucket_name = "wulf-outbound-log"
 
 [vars]
-WULF_OUTBOUND_ALLOWLIST = "cloudflare.com,workers.dev,shart.cloud"
+# x.wulf.shart.cloud is the DNS-exfil zone (any subdomain resolves to the callbackd
+# droplet). Allowlisting it lets P-CAP-03 reach a logging upstream WITHOUT un-blocking
+# callback.wulf.shart.cloud, which the P-OUT-* exfil-control probes rely on staying denied.
+WULF_OUTBOUND_ALLOWLIST = "cloudflare.com,workers.dev,x.wulf.shart.cloud"
 WULF_OUTBOUND_AUTH_TOKEN = "wulf-outbound-injected-canary"
