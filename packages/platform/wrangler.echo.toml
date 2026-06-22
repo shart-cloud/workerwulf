@@ -1,0 +1,9 @@
+name = "wulf-echo"
+main = "src/echo.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+# Header-reflecting upstream fixture for P-CAP-03. On *.workers.dev so it matches
+# the wulf-outbound allowlist (cloudflare.com,workers.dev). No bindings, no secrets.
