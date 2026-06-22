@@ -30,7 +30,7 @@ export const aiInj04: Probe = async ({ env, req, runId }) => {
     const systemPrompt = buildSystemPrompt(promptTier, TYPE_DECLARATIONS);
     const messages = buildMessages(systemPrompt, payload.task);
 
-    const raw = await env.AI.run("@cf/meta/llama-3.1-8b-instruct" as any, {
+    const raw = await env.AI.run("@cf/meta/llama-3.1-8b-instruct-fp8" as any, {
       messages: messages as any,
       stream: false,
     });
