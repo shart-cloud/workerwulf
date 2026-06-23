@@ -1,3 +1,7 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { Command } from "commander";
 
 import { runAudit, type AuditOptions } from "./commands/audit.js";
@@ -7,6 +11,16 @@ import type { Severity } from "./engine/rule.js";
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "informational"];
 
+/** Read the version from package.json — resolves next to src/ (dev) and dist/ (built). */
+function readVersion(): string {
+  try {
+    const pkgPath = join(dirname(fileURLToPath(import.meta.url)), "..", "package.json");
+    return (JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: string }).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 const program = new Command();
 
 program
@@ -15,7 +29,7 @@ program
     "Cloudflare Workers security scanner — encodes workerwulf research findings " +
       "as static detection rules over wrangler config and Worker source.",
   )
-  .version("0.0.0");
+  .version(readVersion());
 
 program
   .command("audit")
