@@ -150,3 +150,24 @@ export function allRuleProbeRefs(): { id: string; probe: string }[] {
     probe: r.probe,
   }));
 }
+
+export interface RuleSummary {
+  id: string;
+  title: string;
+  severity: Severity;
+  probe: string;
+  family: string;
+  surface: "config" | "source" | "account";
+}
+
+/** Flat summary of every registered rule, for the coverage matrix. */
+export function allRules(): RuleSummary[] {
+  return [...configRules, ...sourceRules, ...accountRules].map((r) => ({
+    id: r.id,
+    title: r.title,
+    severity: r.severity,
+    probe: r.probe,
+    family: r.family,
+    surface: r.surface,
+  }));
+}

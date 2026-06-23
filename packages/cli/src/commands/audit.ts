@@ -19,6 +19,7 @@ import {
   runSourceRules,
 } from "../engine/runner.js";
 import { parseWrangler, resolveEnvironments } from "../parsers/wrangler.js";
+import { saveRunReport } from "../report/persist.js";
 import "../rules/index.js";
 
 const CONFIG_NAMES = ["wrangler.toml", "wrangler.json", "wrangler.jsonc"];
@@ -30,6 +31,8 @@ export interface AuditOptions {
   json?: boolean;
   severity?: Severity;
   ignore?: string;
+  /** Persist the run report JSON to this directory for `wulf report`. */
+  save?: string;
 }
 
 export interface AuditRunResult {
@@ -151,6 +154,11 @@ export function runAudit(paths: string[], options: AuditOptions): AuditRunResult
 
   const report = buildReport(randomUUID(), new Date().toISOString(), filteredGroups);
   const all = totalFindings(report);
+
+  if (options.save) {
+    const saved = saveRunReport(report, options.save);
+    notes.push(`saved run report to ${saved}`);
+  }
 
   let output: string;
   if (options.json) {
