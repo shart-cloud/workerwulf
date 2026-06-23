@@ -7,6 +7,20 @@ back-references the workerwulf probe that empirically demonstrated the weakness.
 
 See [`CLI_PRD.md`](../../CLI_PRD.md) for the full specification.
 
+## Install
+
+```sh
+# One-off, no install:
+npx @wulf/cli audit .
+
+# Or install the `wulf` binary:
+npm i -g @wulf/cli
+wulf audit . --source --strict
+```
+
+Requires Node.js ≥ 18. No external tools — `oxc-parser` (Rust/WASM) ships as an
+npm dependency, so there is no Semgrep/Python/Docker requirement.
+
 ## Status — Phases 1–4 complete (PRD fully implemented)
 
 Implemented:
@@ -120,6 +134,26 @@ npx tsx src/index.ts audit . --severity medium --ignore WF-BIND-03
 ## Development
 
 ```sh
+pnpm --filter @wulf/cli dev audit . --source   # run from source via tsx
 pnpm --filter @wulf/cli typecheck
 pnpm --filter @wulf/cli test
+pnpm --filter @wulf/cli build                   # bundle to dist/ via tsup
 ```
+
+## Build & publish
+
+The package bundles to a single `dist/index.js` (ESM, Node ≥ 18 shebang) with
+[tsup](https://tsup.egoist.dev/); runtime deps (`commander`, `oxc-parser`,
+`smol-toml`) stay external and install from `package.json`. Only `dist/` and the
+README ship (`files` allowlist); `npm pack --dry-run` confirms.
+
+```sh
+pnpm --filter @wulf/cli build
+npm publish --workspace @wulf/cli   # prepublishOnly re-runs the build
+```
+
+**Distribution** (PRD §17): npm is the primary channel — `npx @wulf/cli` needs no
+install and pulls `oxc-parser` automatically. A self-contained binary via
+`bun build --compile` is a possible future addition for non-Node users; it is not
+built today because oxc-parser's native/WASM artifact complicates single-file
+compilation.

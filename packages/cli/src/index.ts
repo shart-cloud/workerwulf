@@ -1,4 +1,3 @@
-#!/usr/bin/env -S npx tsx
 import { Command } from "commander";
 
 import { runAudit, type AuditOptions } from "./commands/audit.js";
