@@ -1,0 +1,7 @@
+name = "clean-worker"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[[kv_namespaces]]
+binding = "CACHE"
+id = "kv999"
