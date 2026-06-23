@@ -1,0 +1,23 @@
+name = "families-worker"
+main = "src/index.ts"
+compatibility_date = "2026-05-01"
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "hd1"
+
+[browser]
+binding = "BROWSER"
+
+[[secrets_store_secrets]]
+binding = "API_SECRET"
+store_id = "store1"
+secret_name = "api"
+
+[[services]]
+binding = "SVC"
+service = "backend"
+
+[[d1_databases]]
+binding = "DB"
+database_id = "db1"

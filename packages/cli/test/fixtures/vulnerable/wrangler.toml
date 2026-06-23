@@ -1,0 +1,32 @@
+name = "prey-worker"
+main = "src/index.ts"
+compatibility_date = "2023-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+GREETING = "hello"
+
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "abc123"
+
+[[kv_namespaces]]
+binding = "MY_KV"
+id = "kv123"
+
+[browser]
+binding = "BROWSER"
+
+[[send_email]]
+name = "EMAIL"
+
+[[dispatch_namespaces]]
+binding = "DISPATCH"
+namespace = "tenants"
+
+[env.production]
+trusted_workers = true
+
+[[env.production.mtls_certificates]]
+binding = "CLIENT_CERT"
+certificate_id = "cert-1"
