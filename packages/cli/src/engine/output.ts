@@ -94,21 +94,27 @@ export function renderHuman(report: AuditReport): string {
   return out.join("\n");
 }
 
+/** Serializable run-result object (PRD §13.2 shape). Shared by JSON output and
+ * persisted run files so `wulf report` can read back what `audit`/`scan` emit. */
+export interface SerializedReport {
+  run_id: string;
+  timestamp: string;
+  sources: { source: string; findings: Finding[] }[];
+  counts: SeverityCounts;
+}
+
+export function toSerializable(report: AuditReport): SerializedReport {
+  return {
+    run_id: report.run_id,
+    timestamp: report.timestamp,
+    sources: report.groups.map((g) => ({ source: g.source, findings: g.findings })),
+    counts: report.counts,
+  };
+}
+
 /** Machine-readable JSON (PRD §13.2). */
 export function renderJson(report: AuditReport): string {
-  return JSON.stringify(
-    {
-      run_id: report.run_id,
-      timestamp: report.timestamp,
-      sources: report.groups.map((g) => ({
-        source: g.source,
-        findings: g.findings,
-      })),
-      counts: report.counts,
-    },
-    null,
-    2,
-  );
+  return JSON.stringify(toSerializable(report), null, 2);
 }
 
 export function totalFindings(report: AuditReport): Finding[] {

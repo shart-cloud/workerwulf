@@ -21,6 +21,7 @@ import type {
 import { atOrAbove, hasHighOrAbove, runAccountRules } from "../engine/runner.js";
 import type { Severity } from "../engine/rule.js";
 import { parseWrangler } from "../parsers/wrangler.js";
+import { saveRunReport } from "../report/persist.js";
 import "../rules/index.js";
 
 const CONFIG_NAMES = ["wrangler.toml", "wrangler.json", "wrangler.jsonc"];
@@ -35,6 +36,8 @@ export interface ScanOptions {
   strict?: boolean;
   severity?: Severity;
   ignore?: string;
+  /** Persist the run report JSON to this directory for `wulf report`. */
+  save?: string;
 }
 
 export interface ScanRunResult {
@@ -87,14 +90,19 @@ export async function runScan(
   const report = buildReport(randomUUID(), new Date().toISOString(), filtered);
   const all = totalFindings(report);
 
+  const notes: string[] = outcome.errors.map(
+    (e) => `note: rule ${e.rule_id} errored: ${e.message}`,
+  );
+  if (options.save) {
+    notes.push(`note: saved run report to ${saveRunReport(report, options.save)}`);
+  }
+
   let output: string;
   if (options.json) {
     output = renderJson(report);
   } else {
     const parts = [renderHuman(report)];
-    if (outcome.errors.length > 0) {
-      parts.push("", ...outcome.errors.map((e) => `note: rule ${e.rule_id} errored: ${e.message}`));
-    }
+    if (notes.length > 0) parts.push("", ...notes);
     output = parts.join("\n");
   }
 

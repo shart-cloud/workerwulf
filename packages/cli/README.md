@@ -7,7 +7,7 @@ back-references the workerwulf probe that empirically demonstrated the weakness.
 
 See [`CLI_PRD.md`](../../CLI_PRD.md) for the full specification.
 
-## Status — Phases 1, 2 & 3 complete
+## Status — Phases 1–4 complete (PRD fully implemented)
 
 Implemented:
 
@@ -47,7 +47,25 @@ Implemented:
   - **WfP namespace** — `WF-NS-01` (trusted mode), `WF-NS-02` (no outbound),
     `WF-NS-03` (no custom limits), `WF-NS-04` (scripts not untrusted).
 
-Not yet implemented: `wulf report` aggregation + coverage matrix (Phase 4).
+- **`wulf report`** — aggregate persisted run reports and render the coverage
+  matrix, with `--results-dir`, `--run-id`, `--format markdown|json`, `--output`,
+  `--matrix`, `--include-probes`.
+  - Persistence: `wulf audit/scan --save <dir>` writes per-run JSON; `report`
+    aggregates and dedupes findings across runs.
+  - `--matrix` renders the rule → probe traceability table and validates that
+    every rule cites a probe (§14); `--include-probes <harness results>` adds a
+    probe-coverage table with explicit **gap** rows for probes no rule detects.
+
+The PRD is now fully implemented (Phases 1–4).
+
+### `wulf report` usage
+
+```sh
+wulf audit . --source --save ./results          # persist a run
+wulf report --results-dir ./results             # aggregated markdown report
+wulf report --matrix                            # rule → probe traceability
+wulf report --matrix --include-probes ../harness/results   # + gap analysis
+```
 
 ### `wulf scan` usage
 
