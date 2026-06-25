@@ -120,6 +120,70 @@ spec:
                     port:
                       type: integer
                       default: 8080
+            status:
+              type: object
+              properties:
+                phase:
+                  type: string
+                podName:
+                  type: string
+                podIP:
+                  type: string
+                nodeName:
+                  type: string
+                startedAt:
+                  type: string
+                  format: date-time
+                lastObservedGeneration:
+                  type: integer
+                  format: int64
+                hardeningApplied:
+                  type: object
+                  properties:
+                    profile:
+                      type: string
+                    seccompProfile:
+                      type: string
+                    capabilitiesDrop:
+                      type: array
+                      items:
+                        type: string
+                    runAsNonRoot:
+                      type: boolean
+                    readOnlyRootFilesystem:
+                      type: boolean
+                    networkPolicy:
+                      type: string
+                    tetragonPolicy:
+                      type: string
+                conditions:
+                  type: array
+                  x-kubernetes-list-type: map
+                  x-kubernetes-list-map-keys:
+                    - type
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                      - reason
+                      - message
+                      - lastTransitionTime
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      observedGeneration:
+                        type: integer
+                        format: int64
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
       subresources:
         status: {}
       additionalPrinterColumns:
@@ -129,3 +193,6 @@ spec:
         - name: Exposure
           type: string
           jsonPath: .spec.exposure.type
+        - name: Phase
+          type: string
+          jsonPath: .status.phase

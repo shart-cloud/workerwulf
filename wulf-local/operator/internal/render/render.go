@@ -105,14 +105,14 @@ type serviceBinding struct {
 }
 
 func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorker, error) {
-	if worker.Metadata.Name == "" {
+	if worker.Name == "" {
 		return normalizedWorker{}, errors.New("metadata.name is required")
 	}
 	if worker.Spec.Script.Inline == "" {
 		return normalizedWorker{}, errors.New("only spec.script.inline is supported in the current renderer")
 	}
 
-	namespace := worker.Metadata.Namespace
+	namespace := worker.Namespace
 	if namespace == "" {
 		namespace = "wulf-system"
 	}
@@ -137,20 +137,20 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 	}
 
 	labels := map[string]string{
-		"app.kubernetes.io/name":               worker.Metadata.Name,
+		"app.kubernetes.io/name":               worker.Name,
 		"app.kubernetes.io/part-of":            "wulf-local",
 		"wulf.jaredgore.com/hardening-profile": profile,
 	}
-	for key, value := range worker.Metadata.Labels {
+	for key, value := range worker.Labels {
 		labels[key] = value
 	}
 
 	resources := worker.Spec.Runtime.Resources
 	normalized := normalizedWorker{
-		Name:               worker.Metadata.Name,
+		Name:               worker.Name,
 		Namespace:          namespace,
 		Image:              image,
-		ConfigMapName:      worker.Metadata.Name + "-config",
+		ConfigMapName:      worker.Name + "-config",
 		InlineScript:       worker.Spec.Script.Inline,
 		CompatibilityDate:  worker.Spec.CompatibilityDate,
 		CompatibilityFlags: worker.Spec.CompatibilityFlags,

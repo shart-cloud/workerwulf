@@ -5,6 +5,8 @@ The current slice gives us:
 
 - `api/v1alpha1` Go structs for `SandboxWorker` and `HardeningProfile`.
 - CRD manifests under `config/crd`.
+- `cmd/wulf-local-operator`, a controller-runtime manager with a
+  `SandboxWorker` reconciler.
 - A deterministic renderer that turns an inline-script `SandboxWorker` into:
   - `ConfigMap` containing `workerd.capnp` and `worker.js`
   - `Deployment`
@@ -22,7 +24,32 @@ cd wulf-local/operator
 go test ./...
 go run ./cmd/wulf-local-render
 kubectl kustomize config/crd
+kubectl kustomize config/default
 ```
+
+## Build
+
+```bash
+docker build -f wulf-local/operator/Dockerfile -t ghcr.io/jlgore/wulf-local-operator:0.1.0 wulf-local/operator
+```
+
+## Current reconciliation scope
+
+The reconciler uses server-side apply with field owner
+`wulf-local-operator` and creates/updates:
+
+- `ConfigMap`
+- `Deployment`
+- `Service`
+- `SandboxWorker.status`
+
+It does not yet consume `HardeningProfile` objects. Profile behavior is keyed by
+`spec.hardening.profile`:
+
+- `naked`: no container security context, preserving the intentionally noisy
+  research baseline.
+- `seccomp-baseline`: `RuntimeDefault` seccomp, `runAsNonRoot`, no privilege
+  escalation, and all Linux capabilities dropped.
 
 ## Next controller step
 
