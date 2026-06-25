@@ -159,6 +159,19 @@ kubectl apply -f wulf-local/deploy/profiles/seccomp-baseline.yaml
 kubectl apply -f wulf-local/operator/config/samples/wulf_v1alpha1_sandboxworker_seccomp_baseline.yaml
 ```
 
+For the egress-deny profile, apply the profile object and set
+`spec.hardening.profile: deny-all-egress` on a `SandboxWorker`. The operator
+renders a per-worker `NetworkPolicy` named `<worker>-network-policy` that
+selects only that worker pod and denies all egress:
+
+```bash
+kubectl apply -f wulf-local/deploy/profiles/deny-all-egress.yaml
+kubectl -n wulf-system patch sandboxworker workerd-rt-001 \
+  --type merge \
+  -p '{"spec":{"hardening":{"profile":"deny-all-egress"}}}'
+kubectl -n wulf-system get networkpolicy workerd-rt-001-network-policy
+```
+
 The reconciler resolves `spec.hardening.profile` in the `SandboxWorker`
 namespace. A missing profile leaves the worker in `Failed` status with a
 `HardeningProfileNotFound` condition and no create/update pass for the worker

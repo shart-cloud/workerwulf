@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 
 	wulfv1alpha1 "github.com/jlgore/workerwulf/wulf-local/operator/api/v1alpha1"
 )
@@ -138,6 +139,94 @@ func TestRenderSandboxWorkerResourcesResolvedNakedProfile(t *testing.T) {
 	container := resources.Deployment.Spec.Template.Spec.Containers[0]
 	if container.SecurityContext != nil {
 		t.Fatalf("securityContext = %#v, want nil for naked baseline", container.SecurityContext)
+	}
+	if resources.NetworkPolicy != nil {
+		t.Fatalf("networkPolicy = %#v, want nil for naked baseline", resources.NetworkPolicy)
+	}
+}
+
+func TestRenderSandboxWorkerResourcesNoNetworkPolicyWithoutRef(t *testing.T) {
+	worker := sampleWorker()
+	profile := wulfv1alpha1.HardeningProfileSpec{
+		Seccomp: wulfv1alpha1.SeccompSpec{Type: "Unconfined"},
+	}
+
+	resources, err := RenderSandboxWorkerResources(worker, Options{HardeningProfile: &profile})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+	if resources.NetworkPolicy != nil {
+		t.Fatalf("networkPolicy = %#v, want nil", resources.NetworkPolicy)
+	}
+}
+
+func TestRenderSandboxWorkerResourcesDenyAllEgressNetworkPolicy(t *testing.T) {
+	worker := sampleWorker()
+	profile := wulfv1alpha1.HardeningProfileSpec{
+		NetworkPolicyRef: NetworkPolicyDenyAllEgress,
+	}
+
+	resources, err := RenderSandboxWorkerResources(worker, Options{HardeningProfile: &profile})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+	policy := resources.NetworkPolicy
+	if policy == nil {
+		t.Fatal("networkPolicy = nil")
+	}
+	if policy.Name != "workerd-rt-001-network-policy" {
+		t.Fatalf("networkPolicy.name = %q, want workerd-rt-001-network-policy", policy.Name)
+	}
+	if got := policy.Spec.PodSelector.MatchLabels["app.kubernetes.io/name"]; got != worker.Name {
+		t.Fatalf("podSelector app name = %q, want %q", got, worker.Name)
+	}
+	if len(policy.Spec.PolicyTypes) != 1 || policy.Spec.PolicyTypes[0] != networkingv1.PolicyTypeEgress {
+		t.Fatalf("policyTypes = %#v, want [Egress]", policy.Spec.PolicyTypes)
+	}
+	if len(policy.Spec.Egress) != 0 {
+		t.Fatalf("egress rules = %#v, want none for deny-all egress", policy.Spec.Egress)
+	}
+}
+
+func TestRenderSandboxWorkerDenyAllEgressNetworkPolicyYAML(t *testing.T) {
+	worker := sampleWorker()
+	profile := wulfv1alpha1.HardeningProfileSpec{
+		NetworkPolicyRef: NetworkPolicyDenyAllEgress,
+	}
+
+	objects, err := RenderSandboxWorker(worker, Options{HardeningProfile: &profile})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorker() error = %v", err)
+	}
+	if got, want := len(objects), 4; got != want {
+		t.Fatalf("object count = %d, want %d", got, want)
+	}
+	stream := YAMLStream(objects)
+	for _, want := range []string{
+		"kind: NetworkPolicy",
+		"name: workerd-rt-001-network-policy",
+		"app.kubernetes.io/name: workerd-rt-001",
+		"- Egress",
+		"egress: []",
+	} {
+		if !strings.Contains(stream, want) {
+			t.Fatalf("rendered YAML missing network policy setting %q\n%s", want, stream)
+		}
+	}
+}
+
+func TestRenderSandboxWorkerRejectsUnknownNetworkPolicyRef(t *testing.T) {
+	worker := sampleWorker()
+	profile := wulfv1alpha1.HardeningProfileSpec{
+		NetworkPolicyRef: "public-egress",
+	}
+
+	_, err := RenderSandboxWorkerResources(worker, Options{HardeningProfile: &profile})
+	if err == nil {
+		t.Fatal("RenderSandboxWorkerResources() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), `unsupported networkPolicyRef "public-egress"`) {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

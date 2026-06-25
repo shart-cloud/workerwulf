@@ -7,6 +7,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -65,12 +66,17 @@ func (r *SandboxWorkerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if resources.Service != nil {
-		if err := ctrl.SetControllerReference(&worker, resources.Service, r.Scheme); err != nil {
+		if err := r.applyOwned(ctx, &worker, resources.Service); err != nil {
 			return ctrl.Result{}, err
 		}
-		if err := r.Patch(ctx, resources.Service, client.Apply, client.FieldOwner(FieldOwner), client.ForceOwnership); err != nil {
+	}
+
+	if resources.NetworkPolicy != nil {
+		if err := r.applyOwned(ctx, &worker, resources.NetworkPolicy); err != nil {
 			return ctrl.Result{}, err
 		}
+	} else if err := r.deleteNetworkPolicy(ctx, &worker); err != nil {
+		return ctrl.Result{}, err
 	}
 
 	status, err := r.observedStatus(ctx, &worker, &profile.Spec)
@@ -103,7 +109,25 @@ func (r *SandboxWorkerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.ConfigMap{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
+		Owns(&networkingv1.NetworkPolicy{}).
 		Complete(r)
+}
+
+func (r *SandboxWorkerReconciler) applyOwned(ctx context.Context, worker *wulfv1alpha1.SandboxWorker, object client.Object) error {
+	if err := ctrl.SetControllerReference(worker, object, r.Scheme); err != nil {
+		return err
+	}
+	return r.Patch(ctx, object, client.Apply, client.FieldOwner(FieldOwner), client.ForceOwnership)
+}
+
+func (r *SandboxWorkerReconciler) deleteNetworkPolicy(ctx context.Context, worker *wulfv1alpha1.SandboxWorker) error {
+	policy := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      render.NetworkPolicyName(*worker),
+			Namespace: hardeningProfileNamespace(worker),
+		},
+	}
+	return client.IgnoreNotFound(r.Delete(ctx, policy))
 }
 
 func (r *SandboxWorkerReconciler) requestsForHardeningProfile(ctx context.Context, object client.Object) []ctrl.Request {

@@ -61,10 +61,20 @@ kubectl apply -f wulf-local/deploy/profiles/seccomp-baseline.yaml
 kubectl apply -f wulf-local/operator/config/samples/wulf_v1alpha1_sandboxworker_seccomp_baseline.yaml
 ```
 
+For the built-in egress-deny profile, apply the profile and point a
+`SandboxWorker` at `spec.hardening.profile: deny-all-egress`:
+
+```bash
+kubectl apply -f wulf-local/deploy/profiles/deny-all-egress.yaml
+kubectl -n wulf-system patch sandboxworker workerd-rt-001 \
+  --type merge \
+  -p '{"spec":{"hardening":{"profile":"deny-all-egress"}}}'
+```
+
 Check status and rendered resources:
 
 ```bash
-kubectl -n wulf-system get hardeningprofiles,sandboxworkers,pods,svc
+kubectl -n wulf-system get hardeningprofiles,sandboxworkers,pods,svc,networkpolicies
 kubectl -n wulf-system describe sandboxworker workerd-rt-001
 ```
 
@@ -81,6 +91,7 @@ The reconciler uses server-side apply with field owner
 - `ConfigMap`
 - `Deployment`
 - `Service`
+- `NetworkPolicy`, when requested by the resolved `HardeningProfile`
 - `SandboxWorker.status`
 
 The reconciler resolves `spec.hardening.profile` as a namespaced
@@ -92,6 +103,14 @@ reconcile matching `SandboxWorker` objects in the same namespace:
   research baseline.
 - `seccomp-baseline`: `RuntimeDefault` seccomp, `runAsNonRoot`, no privilege
   escalation, and all Linux capabilities dropped.
+- `deny-all-egress`: the `seccomp-baseline` pod security context plus an
+  operator-managed `NetworkPolicy` selecting only that worker pod and denying
+  all egress.
+
+The supported `spec.networkPolicyRef` value is currently `deny-all-egress`.
+Any other value sets `SandboxWorker.status.phase: Failed` with a
+`RenderFailed` condition, so unsupported policy names fail closed instead of
+silently rendering an unprotected pod.
 
 ## Next controller step
 
@@ -100,6 +119,6 @@ to a controller-runtime project without changing the public CRD shape:
 
 1. Replace the manually maintained CRD and deepcopy files with generated output.
 2. Add ConfigMap and Git-backed script sources.
-3. Add network policy and Tetragon policy rendering from the profile refs.
+3. Add Tetragon policy rendering from the profile refs.
 4. Decide whether missing-profile failures should leave existing deployments in
    place or actively scale/delete them.
