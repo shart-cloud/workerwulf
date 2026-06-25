@@ -1,0 +1,131 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: sandboxworkers.wulf.jaredgore.com
+spec:
+  group: wulf.jaredgore.com
+  scope: Namespaced
+  names:
+    plural: sandboxworkers
+    singular: sandboxworker
+    kind: SandboxWorker
+    shortNames:
+      - sw
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - script
+              properties:
+                script:
+                  type: object
+                  properties:
+                    inline:
+                      type: string
+                    configMapRef:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        key:
+                          type: string
+                    git:
+                      type: object
+                      properties:
+                        repo:
+                          type: string
+                        path:
+                          type: string
+                        ref:
+                          type: string
+                compatibilityDate:
+                  type: string
+                  default: "2024-09-23"
+                compatibilityFlags:
+                  type: array
+                  items:
+                    type: string
+                bindings:
+                  type: object
+                  properties:
+                    vars:
+                      type: object
+                      additionalProperties:
+                        type: string
+                    services:
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - name
+                          - workerRef
+                        properties:
+                          name:
+                            type: string
+                          workerRef:
+                            type: string
+                hardening:
+                  type: object
+                  properties:
+                    profile:
+                      type: string
+                      default: naked
+                runtime:
+                  type: object
+                  properties:
+                    resources:
+                      type: object
+                      properties:
+                        requests:
+                          type: object
+                          properties:
+                            cpu:
+                              type: string
+                            memory:
+                              type: string
+                        limits:
+                          type: object
+                          properties:
+                            cpu:
+                              type: string
+                            memory:
+                              type: string
+                    maxIsolates:
+                      type: integer
+                    requestTimeoutMs:
+                      type: integer
+                    coLocateWith:
+                      type: string
+                    v8Inspector:
+                      type: boolean
+                exposure:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                      enum:
+                        - ClusterIP
+                        - Ingress
+                        - None
+                      default: ClusterIP
+                    port:
+                      type: integer
+                      default: 8080
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Profile
+          type: string
+          jsonPath: .spec.hardening.profile
+        - name: Exposure
+          type: string
+          jsonPath: .spec.exposure.type

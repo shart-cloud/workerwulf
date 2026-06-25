@@ -1,0 +1,63 @@
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicyNamespaced
+metadata:
+  name: workerd-rt-001-syscalls
+  namespace: wulf-system
+spec:
+  kprobes:
+    - call: "__x64_sys_openat"
+      syscall: true
+      selectors:
+        - matchBinaries:
+            - operator: In
+              values:
+                - "/usr/local/bin/workerd"
+                - "/usr/local/lib/node_modules/workerd/bin/workerd"
+                - "/usr/local/lib/node_modules/workerd/node_modules/@cloudflare/workerd-linux-64/bin/workerd"
+                - "/usr/bin/workerd"
+      args:
+        - index: 1
+          type: string
+        - index: 2
+          type: int
+    - call: "__x64_sys_connect"
+      syscall: true
+      selectors:
+        - matchBinaries:
+            - operator: In
+              values:
+                - "/usr/local/bin/workerd"
+                - "/usr/local/lib/node_modules/workerd/bin/workerd"
+                - "/usr/local/lib/node_modules/workerd/node_modules/@cloudflare/workerd-linux-64/bin/workerd"
+                - "/usr/bin/workerd"
+      args:
+        - index: 1
+          type: sockaddr
+    - call: "__x64_sys_execve"
+      syscall: true
+      selectors:
+        - matchBinaries:
+            - operator: In
+              values:
+                - "/usr/local/bin/workerd"
+                - "/usr/local/lib/node_modules/workerd/bin/workerd"
+                - "/usr/local/lib/node_modules/workerd/node_modules/@cloudflare/workerd-linux-64/bin/workerd"
+                - "/usr/bin/workerd"
+      args:
+        - index: 0
+          type: string
+    - call: "__x64_sys_mmap"
+      syscall: true
+      selectors:
+        - matchBinaries:
+            - operator: In
+              values:
+                - "/usr/local/bin/workerd"
+                - "/usr/local/lib/node_modules/workerd/bin/workerd"
+                - "/usr/local/lib/node_modules/workerd/node_modules/@cloudflare/workerd-linux-64/bin/workerd"
+                - "/usr/bin/workerd"
+      args:
+        - index: 2
+          type: int
+        - index: 3
+          type: int

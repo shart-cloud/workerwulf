@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - bases/wulf.jaredgore.com_sandboxworkers.yaml
+  - bases/wulf.jaredgore.com_hardeningprofiles.yaml
