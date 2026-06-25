@@ -1,6 +1,9 @@
 package render
 
 import (
+	"fmt"
+	"strings"
+
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -80,7 +83,7 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 									corev1.ResourceMemory: resource.MustParse(normalized.MemoryLimit),
 								},
 							},
-							SecurityContext: securityContextResourceFor(normalized.HardeningProfile),
+							SecurityContext: securityContextResourceFor(normalized.HardeningProfile, normalized.HardeningSpec),
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "workerd-config", MountPath: "/etc/workerd", ReadOnly: true},
 							},
@@ -147,21 +150,130 @@ func int64Ptr(value int64) *int64 {
 	return &value
 }
 
-func securityContextResourceFor(profile string) *corev1.SecurityContext {
+func hardeningProfileSpecFor(profile string, resolved *wulfv1alpha1.HardeningProfileSpec) *wulfv1alpha1.HardeningProfileSpec {
+	if resolved != nil {
+		return resolved.DeepCopy()
+	}
 	switch profile {
 	case "seccomp-baseline", "seccomp-strict", "bpf-lsm", "full-lockdown":
-		return &corev1.SecurityContext{
-			AllowPrivilegeEscalation: boolPtr(false),
-			Capabilities: &corev1.Capabilities{
-				Drop: []corev1.Capability{corev1.Capability("ALL")},
-			},
-			RunAsNonRoot: boolPtr(true),
-			RunAsUser:    int64Ptr(65532),
-			SeccompProfile: &corev1.SeccompProfile{
-				Type: corev1.SeccompProfileTypeRuntimeDefault,
-			},
+		allowPrivilegeEscalation := false
+		return &wulfv1alpha1.HardeningProfileSpec{
+			Seccomp:                  wulfv1alpha1.SeccompSpec{Type: string(corev1.SeccompProfileTypeRuntimeDefault)},
+			AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+			CapabilitiesDrop:         []corev1.Capability{corev1.Capability("ALL")},
+			RunAsNonRoot:             true,
+			RunAsUser:                65532,
 		}
 	default:
 		return nil
 	}
+}
+
+func securityContextResourceFor(profile string, spec *wulfv1alpha1.HardeningProfileSpec) *corev1.SecurityContext {
+	spec = hardeningProfileSpecFor(profile, spec)
+	if spec == nil {
+		return nil
+	}
+
+	securityContext := &corev1.SecurityContext{}
+	hasSecurityContext := false
+
+	if spec.AllowPrivilegeEscalation != nil {
+		securityContext.AllowPrivilegeEscalation = boolPtr(*spec.AllowPrivilegeEscalation)
+		hasSecurityContext = true
+	}
+
+	if len(spec.CapabilitiesDrop) > 0 || len(spec.CapabilitiesAdd) > 0 {
+		securityContext.Capabilities = &corev1.Capabilities{
+			Drop: append([]corev1.Capability(nil), spec.CapabilitiesDrop...),
+			Add:  append([]corev1.Capability(nil), spec.CapabilitiesAdd...),
+		}
+		hasSecurityContext = true
+	}
+
+	if spec.ReadOnlyRootFilesystem {
+		securityContext.ReadOnlyRootFilesystem = boolPtr(true)
+		hasSecurityContext = true
+	}
+
+	if spec.RunAsNonRoot {
+		securityContext.RunAsNonRoot = boolPtr(true)
+		hasSecurityContext = true
+	}
+
+	if spec.RunAsUser != 0 {
+		securityContext.RunAsUser = int64Ptr(spec.RunAsUser)
+		hasSecurityContext = true
+	}
+
+	switch spec.Seccomp.Type {
+	case string(corev1.SeccompProfileTypeRuntimeDefault):
+		securityContext.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
+		hasSecurityContext = true
+	case string(corev1.SeccompProfileTypeLocalhost):
+		securityContext.SeccompProfile = &corev1.SeccompProfile{
+			Type:             corev1.SeccompProfileTypeLocalhost,
+			LocalhostProfile: stringPtr(spec.Seccomp.ProfileRef),
+		}
+		hasSecurityContext = true
+	case "", string(corev1.SeccompProfileTypeUnconfined):
+		// The naked baseline intentionally leaves the container security context unset.
+	default:
+		securityContext.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileType(spec.Seccomp.Type)}
+		hasSecurityContext = true
+	}
+
+	if !hasSecurityContext {
+		return nil
+	}
+	return securityContext
+}
+
+func securityContextFor(profile string, spec *wulfv1alpha1.HardeningProfileSpec) string {
+	securityContext := securityContextResourceFor(profile, spec)
+	if securityContext == nil {
+		return ""
+	}
+
+	var builder strings.Builder
+	builder.WriteString("          securityContext:\n")
+	if securityContext.AllowPrivilegeEscalation != nil {
+		builder.WriteString(fmt.Sprintf("            allowPrivilegeEscalation: %t\n", *securityContext.AllowPrivilegeEscalation))
+	}
+	if securityContext.Capabilities != nil {
+		builder.WriteString("            capabilities:\n")
+		if len(securityContext.Capabilities.Add) > 0 {
+			builder.WriteString("              add:\n")
+			for _, capability := range securityContext.Capabilities.Add {
+				builder.WriteString(fmt.Sprintf("                - %s\n", capability))
+			}
+		}
+		if len(securityContext.Capabilities.Drop) > 0 {
+			builder.WriteString("              drop:\n")
+			for _, capability := range securityContext.Capabilities.Drop {
+				builder.WriteString(fmt.Sprintf("                - %s\n", capability))
+			}
+		}
+	}
+	if securityContext.ReadOnlyRootFilesystem != nil {
+		builder.WriteString(fmt.Sprintf("            readOnlyRootFilesystem: %t\n", *securityContext.ReadOnlyRootFilesystem))
+	}
+	if securityContext.RunAsNonRoot != nil {
+		builder.WriteString(fmt.Sprintf("            runAsNonRoot: %t\n", *securityContext.RunAsNonRoot))
+	}
+	if securityContext.RunAsUser != nil {
+		builder.WriteString(fmt.Sprintf("            runAsUser: %d\n", *securityContext.RunAsUser))
+	}
+	if securityContext.SeccompProfile != nil {
+		builder.WriteString("            seccompProfile:\n")
+		builder.WriteString(fmt.Sprintf("              type: %s\n", securityContext.SeccompProfile.Type))
+		if securityContext.SeccompProfile.LocalhostProfile != nil {
+			builder.WriteString(fmt.Sprintf("              localhostProfile: %s\n", *securityContext.SeccompProfile.LocalhostProfile))
+		}
+	}
+	return builder.String()
+}
+
+func stringPtr(value string) *string {
+	return &value
 }

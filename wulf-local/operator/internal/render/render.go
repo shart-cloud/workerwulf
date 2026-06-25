@@ -15,7 +15,8 @@ import (
 const DefaultImage = "ghcr.io/jlgore/wulf-local-workerd:0.1.0"
 
 type Options struct {
-	Image string
+	Image            string
+	HardeningProfile *wulfv1alpha1.HardeningProfileSpec
 }
 
 type Object struct {
@@ -80,6 +81,7 @@ type normalizedWorker struct {
 	Vars               []bindingVar
 	Services           []serviceBinding
 	HardeningProfile   string
+	HardeningSpec      *wulfv1alpha1.HardeningProfileSpec
 	ExposureType       string
 	Port               int
 	CPURequest         string
@@ -135,6 +137,7 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 	if profile == "" {
 		profile = "naked"
 	}
+	hardeningSpec := hardeningProfileSpecFor(profile, opts.HardeningProfile)
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":               worker.Name,
@@ -159,13 +162,14 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 		Vars:               sortedVars(worker.Spec.Bindings.Vars),
 		Services:           sortedServices(worker.Spec.Bindings.Services),
 		HardeningProfile:   profile,
+		HardeningSpec:      hardeningSpec,
 		ExposureType:       exposureType,
 		Port:               port,
 		CPURequest:         defaultString(resources.Requests.CPU, "100m"),
 		MemoryRequest:      defaultString(resources.Requests.Memory, "128Mi"),
 		CPULimit:           defaultString(resources.Limits.CPU, "500m"),
 		MemoryLimit:        defaultString(resources.Limits.Memory, "256Mi"),
-		SecurityContext:    securityContextFor(profile),
+		SecurityContext:    securityContextFor(profile, hardeningSpec),
 	}
 	if normalized.CompatibilityDate == "" {
 		normalized.CompatibilityDate = "2024-09-23"
@@ -216,24 +220,6 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func securityContextFor(profile string) string {
-	switch profile {
-	case "seccomp-baseline", "seccomp-strict", "bpf-lsm", "full-lockdown":
-		return `          securityContext:
-            allowPrivilegeEscalation: false
-            capabilities:
-              drop:
-                - ALL
-            runAsNonRoot: true
-            runAsUser: 65532
-            seccompProfile:
-              type: RuntimeDefault
-`
-	default:
-		return ""
-	}
 }
 
 func renderWorkerdConfig(worker normalizedWorker) (string, error) {

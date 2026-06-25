@@ -160,15 +160,16 @@ type HardeningProfileList struct {
 }
 
 type HardeningProfileSpec struct {
-	Description            string              `json:"description,omitempty"`
-	Seccomp                SeccompSpec         `json:"seccomp,omitempty"`
-	CapabilitiesDrop       []corev1.Capability `json:"capabilitiesDrop,omitempty"`
-	CapabilitiesAdd        []corev1.Capability `json:"capabilitiesAdd,omitempty"`
-	ReadOnlyRootFilesystem bool                `json:"readOnlyRootFilesystem,omitempty"`
-	RunAsNonRoot           bool                `json:"runAsNonRoot,omitempty"`
-	RunAsUser              int64               `json:"runAsUser,omitempty"`
-	NetworkPolicyRef       string              `json:"networkPolicyRef,omitempty"`
-	TetragonPolicyRef      string              `json:"tetragonPolicyRef,omitempty"`
+	Description              string              `json:"description,omitempty"`
+	Seccomp                  SeccompSpec         `json:"seccomp,omitempty"`
+	AllowPrivilegeEscalation *bool               `json:"allowPrivilegeEscalation,omitempty"`
+	CapabilitiesDrop         []corev1.Capability `json:"capabilitiesDrop,omitempty"`
+	CapabilitiesAdd          []corev1.Capability `json:"capabilitiesAdd,omitempty"`
+	ReadOnlyRootFilesystem   bool                `json:"readOnlyRootFilesystem,omitempty"`
+	RunAsNonRoot             bool                `json:"runAsNonRoot,omitempty"`
+	RunAsUser                int64               `json:"runAsUser,omitempty"`
+	NetworkPolicyRef         string              `json:"networkPolicyRef,omitempty"`
+	TetragonPolicyRef        string              `json:"tetragonPolicyRef,omitempty"`
 }
 
 type HardeningProfileStatus struct {

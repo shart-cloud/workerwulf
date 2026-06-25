@@ -41,6 +41,8 @@ spec:
                   type: array
                   items:
                     type: string
+                allowPrivilegeEscalation:
+                  type: boolean
                 readOnlyRootFilesystem:
                   type: boolean
                 runAsNonRoot:

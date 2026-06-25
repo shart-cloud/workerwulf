@@ -120,7 +120,8 @@ node wulf-local/scripts/collect-observation.mjs \
 - ProbeTrack, Vector sink, and Parquet writer are not implemented yet.
 - The operator foundation exists under `operator/`: CRDs, RBAC, manager
   deployment, `SandboxWorker` reconciliation for inline scripts, status updates,
-  and `naked` / `seccomp-baseline` profile rendering.
+  namespaced `HardeningProfile` resolution, and `naked` / `seccomp-baseline`
+  profile rendering.
 - BPF LSM enforcement is not implemented yet.
 - No Durable Object or multi-isolate storage claims yet.
 
@@ -140,3 +141,25 @@ docker build \
   -t ghcr.io/jlgore/wulf-local-operator:0.1.0 \
   wulf-local/operator
 ```
+
+Install the operator and run a sample worker:
+
+```bash
+kubectl apply -f wulf-local/deploy/poc/namespace.yaml
+kubectl apply -k wulf-local/operator/config/default
+
+kubectl apply -f wulf-local/deploy/profiles/naked.yaml
+kubectl apply -f wulf-local/operator/config/samples/wulf_v1alpha1_sandboxworker.yaml
+```
+
+For the restricted profile, apply the profile object first, then the worker:
+
+```bash
+kubectl apply -f wulf-local/deploy/profiles/seccomp-baseline.yaml
+kubectl apply -f wulf-local/operator/config/samples/wulf_v1alpha1_sandboxworker_seccomp_baseline.yaml
+```
+
+The reconciler resolves `spec.hardening.profile` in the `SandboxWorker`
+namespace. A missing profile leaves the worker in `Failed` status with a
+`HardeningProfileNotFound` condition and no create/update pass for the worker
+deployment.

@@ -147,6 +147,10 @@ func (in *HardeningProfileSpec) DeepCopy() *HardeningProfileSpec {
 	}
 	out := new(HardeningProfileSpec)
 	*out = *in
+	if in.AllowPrivilegeEscalation != nil {
+		out.AllowPrivilegeEscalation = new(bool)
+		*out.AllowPrivilegeEscalation = *in.AllowPrivilegeEscalation
+	}
 	if in.CapabilitiesDrop != nil {
 		out.CapabilitiesDrop = append([]corev1.Capability(nil), in.CapabilitiesDrop...)
 	}
