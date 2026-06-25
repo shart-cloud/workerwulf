@@ -14,12 +14,14 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 
 	wulfv1alpha1 "github.com/jlgore/workerwulf/wulf-local/operator/api/v1alpha1"
 	"github.com/jlgore/workerwulf/wulf-local/operator/internal/render"
 )
 
 const FieldOwner = "wulf-local-operator"
+const sandboxWorkerHardeningProfileField = "spec.hardening.profile"
 
 type SandboxWorkerReconciler struct {
 	client.Client
@@ -83,12 +85,47 @@ func (r *SandboxWorkerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 func (r *SandboxWorkerReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(
+		context.Background(),
+		&wulfv1alpha1.SandboxWorker{},
+		sandboxWorkerHardeningProfileField,
+		sandboxWorkerHardeningProfileIndex,
+	); err != nil {
+		return err
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&wulfv1alpha1.SandboxWorker{}).
+		Watches(
+			&wulfv1alpha1.HardeningProfile{},
+			handler.EnqueueRequestsFromMapFunc(r.requestsForHardeningProfile),
+		).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}).
 		Complete(r)
+}
+
+func (r *SandboxWorkerReconciler) requestsForHardeningProfile(ctx context.Context, object client.Object) []ctrl.Request {
+	if object == nil || object.GetName() == "" {
+		return nil
+	}
+
+	var workers wulfv1alpha1.SandboxWorkerList
+	if err := r.List(ctx, &workers,
+		client.InNamespace(object.GetNamespace()),
+		client.MatchingFields{sandboxWorkerHardeningProfileField: object.GetName()},
+	); err != nil {
+		ctrl.LoggerFrom(ctx).Error(err, "list SandboxWorkers for HardeningProfile", "profile", object.GetName(), "namespace", object.GetNamespace())
+		return nil
+	}
+
+	requests := make([]ctrl.Request, 0, len(workers.Items))
+	for i := range workers.Items {
+		worker := &workers.Items[i]
+		requests = append(requests, ctrl.Request{NamespacedName: NamespacedName(worker)})
+	}
+	return requests
 }
 
 func (r *SandboxWorkerReconciler) resolveHardeningProfile(ctx context.Context, worker *wulfv1alpha1.SandboxWorker) (*wulfv1alpha1.HardeningProfile, error) {
@@ -225,6 +262,14 @@ func hardeningProfileName(worker *wulfv1alpha1.SandboxWorker) string {
 		return "naked"
 	}
 	return worker.Spec.Hardening.Profile
+}
+
+func sandboxWorkerHardeningProfileIndex(object client.Object) []string {
+	worker, ok := object.(*wulfv1alpha1.SandboxWorker)
+	if !ok {
+		return nil
+	}
+	return []string{hardeningProfileName(worker)}
 }
 
 func hardeningProfileNamespace(worker *wulfv1alpha1.SandboxWorker) string {
