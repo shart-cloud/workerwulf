@@ -85,7 +85,8 @@ The reconciler uses server-side apply with field owner
 
 The reconciler resolves `spec.hardening.profile` as a namespaced
 `HardeningProfile` object before rendering. The resolved profile fields drive
-the pod security context:
+the pod security context, and `HardeningProfile` create/update/delete events
+reconcile matching `SandboxWorker` objects in the same namespace:
 
 - `naked`: no container security context, preserving the intentionally noisy
   research baseline.
@@ -98,7 +99,7 @@ When `kubebuilder` or `controller-gen` is available, this module can be promoted
 to a controller-runtime project without changing the public CRD shape:
 
 1. Replace the manually maintained CRD and deepcopy files with generated output.
-2. Add a watch that reconciles referencing `SandboxWorker` objects when a
-   `HardeningProfile` changes.
-3. Add ConfigMap and Git-backed script sources.
-4. Add network policy and Tetragon policy rendering from the profile refs.
+2. Add ConfigMap and Git-backed script sources.
+3. Add network policy and Tetragon policy rendering from the profile refs.
+4. Decide whether missing-profile failures should leave existing deployments in
+   place or actively scale/delete them.

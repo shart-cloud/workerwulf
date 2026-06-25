@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -18,17 +19,9 @@ import (
 )
 
 func TestReconcileMissingHardeningProfileSetsFailedStatus(t *testing.T) {
-	scheme := testScheme(t)
 	worker := testWorker("missing-profile")
 	worker.Spec.Hardening.Profile = "missing-profile"
-	reconciler := &SandboxWorkerReconciler{
-		Client: fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithStatusSubresource(&wulfv1alpha1.SandboxWorker{}).
-			WithObjects(&worker).
-			Build(),
-		Scheme: scheme,
-	}
+	reconciler := newTestReconciler(t, &worker)
 
 	_, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: NamespacedName(&worker)})
 	if err != nil {
@@ -60,18 +53,115 @@ func TestReconcileMissingHardeningProfileSetsFailedStatus(t *testing.T) {
 	}
 }
 
+func TestHardeningProfileUpdateChangesRenderedDeploymentSecurityContext(t *testing.T) {
+	ctx := context.Background()
+	worker := testWorker("profile-update-worker")
+	worker.Spec.Hardening.Profile = "seccomp-baseline"
+	profile := testHardeningProfile("seccomp-baseline", worker.Namespace, testSeccompBaselineSpec())
+	reconciler := newTestReconciler(t, &worker, &profile)
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: NamespacedName(&worker)}); err != nil {
+		t.Fatalf("initial Reconcile() error = %v", err)
+	}
+
+	var deployment appsv1.Deployment
+	if err := reconciler.Get(ctx, client.ObjectKey{Name: worker.Name, Namespace: worker.Namespace}, &deployment); err != nil {
+		t.Fatalf("Get(Deployment) error = %v", err)
+	}
+	container := deployment.Spec.Template.Spec.Containers[0]
+	if container.SecurityContext == nil {
+		t.Fatal("initial securityContext = nil")
+	}
+	if container.SecurityContext.ReadOnlyRootFilesystem != nil {
+		t.Fatalf("initial readOnlyRootFilesystem = %v, want nil", *container.SecurityContext.ReadOnlyRootFilesystem)
+	}
+
+	profile.Spec.ReadOnlyRootFilesystem = true
+	if err := reconciler.Update(ctx, &profile); err != nil {
+		t.Fatalf("Update(HardeningProfile) error = %v", err)
+	}
+
+	requests := reconciler.requestsForHardeningProfile(ctx, &profile)
+	wantRequests := []ctrl.Request{{NamespacedName: NamespacedName(&worker)}}
+	if !reflect.DeepEqual(requests, wantRequests) {
+		t.Fatalf("requestsForHardeningProfile() = %#v, want %#v", requests, wantRequests)
+	}
+	for _, request := range requests {
+		if _, err := reconciler.Reconcile(ctx, request); err != nil {
+			t.Fatalf("Reconcile(%s) error = %v", request.NamespacedName, err)
+		}
+	}
+
+	if err := reconciler.Get(ctx, client.ObjectKey{Name: worker.Name, Namespace: worker.Namespace}, &deployment); err != nil {
+		t.Fatalf("Get(Deployment) after profile update error = %v", err)
+	}
+	container = deployment.Spec.Template.Spec.Containers[0]
+	if container.SecurityContext == nil {
+		t.Fatal("updated securityContext = nil")
+	}
+	if container.SecurityContext.ReadOnlyRootFilesystem == nil || !*container.SecurityContext.ReadOnlyRootFilesystem {
+		t.Fatalf("updated readOnlyRootFilesystem = %v, want true", container.SecurityContext.ReadOnlyRootFilesystem)
+	}
+}
+
+func TestDeletingReferencedHardeningProfileMovesWorkerToFailed(t *testing.T) {
+	ctx := context.Background()
+	worker := testWorker("deleted-profile-worker")
+	worker.Spec.Hardening.Profile = "seccomp-baseline"
+	profile := testHardeningProfile("seccomp-baseline", worker.Namespace, testSeccompBaselineSpec())
+	reconciler := newTestReconciler(t, &worker, &profile)
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: NamespacedName(&worker)}); err != nil {
+		t.Fatalf("initial Reconcile() error = %v", err)
+	}
+	if err := reconciler.Delete(ctx, &profile); err != nil {
+		t.Fatalf("Delete(HardeningProfile) error = %v", err)
+	}
+
+	requests := reconciler.requestsForHardeningProfile(ctx, &profile)
+	wantRequests := []ctrl.Request{{NamespacedName: NamespacedName(&worker)}}
+	if !reflect.DeepEqual(requests, wantRequests) {
+		t.Fatalf("requestsForHardeningProfile() after delete = %#v, want %#v", requests, wantRequests)
+	}
+	for _, request := range requests {
+		if _, err := reconciler.Reconcile(ctx, request); err != nil {
+			t.Fatalf("Reconcile(%s) after profile delete error = %v", request.NamespacedName, err)
+		}
+	}
+
+	var got wulfv1alpha1.SandboxWorker
+	if err := reconciler.Get(ctx, NamespacedName(&worker), &got); err != nil {
+		t.Fatalf("Get(SandboxWorker) error = %v", err)
+	}
+	if got.Status.Phase != "Failed" {
+		t.Fatalf("status.phase = %q, want Failed", got.Status.Phase)
+	}
+	condition := readyCondition(got.Status.Conditions)
+	if condition == nil {
+		t.Fatal("Ready condition missing")
+	}
+	if condition.Reason != "HardeningProfileNotFound" {
+		t.Fatalf("Ready reason = %q, want HardeningProfileNotFound", condition.Reason)
+	}
+}
+
+func TestUnrelatedHardeningProfileChangeDoesNotEnqueueWorkers(t *testing.T) {
+	worker := testWorker("seccomp-worker")
+	worker.Spec.Hardening.Profile = "seccomp-baseline"
+	profile := testHardeningProfile("unrelated", worker.Namespace, testSeccompBaselineSpec())
+	reconciler := newTestReconciler(t, &worker, &profile)
+
+	requests := reconciler.requestsForHardeningProfile(context.Background(), &profile)
+	if len(requests) != 0 {
+		t.Fatalf("requestsForHardeningProfile() = %#v, want none", requests)
+	}
+}
+
 func TestResolveHardeningProfileUsesSandboxWorkerNamespace(t *testing.T) {
-	scheme := testScheme(t)
 	worker := testWorker("seccomp-worker")
 	worker.Spec.Hardening.Profile = "seccomp-baseline"
 	profile := testHardeningProfile("seccomp-baseline", worker.Namespace, testSeccompBaselineSpec())
-	reconciler := &SandboxWorkerReconciler{
-		Client: fake.NewClientBuilder().
-			WithScheme(scheme).
-			WithObjects(&worker, &profile).
-			Build(),
-		Scheme: scheme,
-	}
+	reconciler := newTestReconciler(t, &worker, &profile)
 
 	resolved, err := reconciler.resolveHardeningProfile(context.Background(), &worker)
 	if err != nil {
@@ -82,6 +172,26 @@ func TestResolveHardeningProfileUsesSandboxWorkerNamespace(t *testing.T) {
 	}
 	if resolved.Spec.Seccomp.Type != "RuntimeDefault" {
 		t.Fatalf("resolved seccomp type = %q, want RuntimeDefault", resolved.Spec.Seccomp.Type)
+	}
+}
+
+func newTestReconciler(t *testing.T, objects ...client.Object) *SandboxWorkerReconciler {
+	t.Helper()
+	scheme := testScheme(t)
+	builder := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithStatusSubresource(&wulfv1alpha1.SandboxWorker{}).
+		WithIndex(
+			&wulfv1alpha1.SandboxWorker{},
+			sandboxWorkerHardeningProfileField,
+			sandboxWorkerHardeningProfileIndex,
+		)
+	if len(objects) > 0 {
+		builder.WithObjects(objects...)
+	}
+	return &SandboxWorkerReconciler{
+		Client: builder.Build(),
+		Scheme: scheme,
 	}
 }
 
