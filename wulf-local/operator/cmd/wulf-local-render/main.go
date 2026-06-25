@@ -10,7 +10,7 @@ import (
 
 func main() {
 	worker := wulfv1alpha1.NewSandboxWorker("workerd-rt-001", "wulf-system")
-	worker.Metadata.Labels = map[string]string{
+	worker.Labels = map[string]string{
 		"wulf.jaredgore.com/track":    "runtime-fingerprint",
 		"wulf.jaredgore.com/probe-id": "P-WL-RT-001",
 	}

@@ -117,6 +117,26 @@ node wulf-local/scripts/collect-observation.mjs \
 
 ## Deferred
 
-- No operator, CRDs, ProbeTrack, Vector sink, or Parquet writer yet.
-- No seccomp or BPF LSM enforcement yet.
+- ProbeTrack, Vector sink, and Parquet writer are not implemented yet.
+- The operator foundation exists under `operator/`: CRDs, RBAC, manager
+  deployment, `SandboxWorker` reconciliation for inline scripts, status updates,
+  and `naked` / `seccomp-baseline` profile rendering.
+- BPF LSM enforcement is not implemented yet.
 - No Durable Object or multi-isolate storage claims yet.
+
+## Operator Preview
+
+Render the operator install manifests:
+
+```bash
+kubectl kustomize wulf-local/operator/config/default
+```
+
+Build the manager image:
+
+```bash
+docker build \
+  -f wulf-local/operator/Dockerfile \
+  -t ghcr.io/jlgore/wulf-local-operator:0.1.0 \
+  wulf-local/operator
+```

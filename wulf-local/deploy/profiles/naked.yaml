@@ -1,0 +1,11 @@
+apiVersion: wulf.jaredgore.com/v1alpha1
+kind: HardeningProfile
+metadata:
+  name: naked
+  namespace: wulf-system
+spec:
+  description: "Research baseline: no additional pod hardening beyond cluster defaults"
+  seccomp:
+    type: Unconfined
+  readOnlyRootFilesystem: false
+  runAsNonRoot: false

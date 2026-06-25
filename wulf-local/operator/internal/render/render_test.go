@@ -56,6 +56,30 @@ func TestRenderSandboxWorkerSeccompBaselineSecurityContext(t *testing.T) {
 	}
 }
 
+func TestRenderSandboxWorkerResourcesSeccompBaselineSecurityContext(t *testing.T) {
+	worker := sampleWorker()
+	worker.Spec.Hardening.Profile = "seccomp-baseline"
+
+	resources, err := RenderSandboxWorkerResources(worker, Options{})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+
+	container := resources.Deployment.Spec.Template.Spec.Containers[0]
+	if container.SecurityContext == nil {
+		t.Fatal("securityContext = nil")
+	}
+	if container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation {
+		t.Fatalf("allowPrivilegeEscalation = %v, want false", container.SecurityContext.AllowPrivilegeEscalation)
+	}
+	if container.SecurityContext.SeccompProfile == nil || container.SecurityContext.SeccompProfile.Type != "RuntimeDefault" {
+		t.Fatalf("seccompProfile = %#v, want RuntimeDefault", container.SecurityContext.SeccompProfile)
+	}
+	if got := container.SecurityContext.Capabilities.Drop[0]; got != "ALL" {
+		t.Fatalf("capabilities.drop[0] = %q, want ALL", got)
+	}
+}
+
 func TestRenderSandboxWorkerRejectsNonInlineScriptForNow(t *testing.T) {
 	worker := sampleWorker()
 	worker.Spec.Script.Inline = ""
@@ -72,7 +96,7 @@ func TestRenderSandboxWorkerRejectsNonInlineScriptForNow(t *testing.T) {
 
 func sampleWorker() wulfv1alpha1.SandboxWorker {
 	worker := wulfv1alpha1.NewSandboxWorker("workerd-rt-001", "wulf-system")
-	worker.Metadata.Labels = map[string]string{
+	worker.Labels = map[string]string{
 		"wulf.jaredgore.com/track":    "runtime-fingerprint",
 		"wulf.jaredgore.com/probe-id": "P-WL-RT-001",
 	}
