@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"fmt"
 	"reflect"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -35,9 +36,21 @@ func (r *SandboxWorkerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
-	resources, err := render.RenderSandboxWorkerResources(worker, render.Options{Image: r.Image})
+	profile, err := r.resolveHardeningProfile(ctx, &worker)
 	if err != nil {
-		return ctrl.Result{}, r.updateStatus(ctx, &worker, statusForRenderError(worker, err))
+		status := statusForProfileError(worker, hardeningProfileName(&worker), err)
+		if updateErr := r.updateStatus(ctx, &worker, status); updateErr != nil {
+			return ctrl.Result{}, updateErr
+		}
+		if apierrors.IsNotFound(err) {
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, err
+	}
+
+	resources, err := render.RenderSandboxWorkerResources(worker, render.Options{Image: r.Image, HardeningProfile: &profile.Spec})
+	if err != nil {
+		return ctrl.Result{}, r.updateStatus(ctx, &worker, statusForRenderError(worker, &profile.Spec, err))
 	}
 
 	for _, object := range []client.Object{resources.ConfigMap, resources.Deployment} {
@@ -58,7 +71,7 @@ func (r *SandboxWorkerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
-	status, err := r.observedStatus(ctx, &worker)
+	status, err := r.observedStatus(ctx, &worker, &profile.Spec)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -78,11 +91,23 @@ func (r *SandboxWorkerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Complete(r)
 }
 
-func (r *SandboxWorkerReconciler) observedStatus(ctx context.Context, worker *wulfv1alpha1.SandboxWorker) (wulfv1alpha1.SandboxWorkerStatus, error) {
+func (r *SandboxWorkerReconciler) resolveHardeningProfile(ctx context.Context, worker *wulfv1alpha1.SandboxWorker) (*wulfv1alpha1.HardeningProfile, error) {
+	var profile wulfv1alpha1.HardeningProfile
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      hardeningProfileName(worker),
+		Namespace: hardeningProfileNamespace(worker),
+	}, &profile)
+	if err != nil {
+		return nil, err
+	}
+	return &profile, nil
+}
+
+func (r *SandboxWorkerReconciler) observedStatus(ctx context.Context, worker *wulfv1alpha1.SandboxWorker, profile *wulfv1alpha1.HardeningProfileSpec) (wulfv1alpha1.SandboxWorkerStatus, error) {
 	status := wulfv1alpha1.SandboxWorkerStatus{
 		Phase:                  "Pending",
 		LastObservedGeneration: worker.Generation,
-		HardeningApplied:       hardeningApplied(worker.Spec.Hardening.Profile),
+		HardeningApplied:       hardeningApplied(hardeningProfileName(worker), profile),
 	}
 
 	var pods corev1.PodList
@@ -123,13 +148,29 @@ func (r *SandboxWorkerReconciler) updateStatus(ctx context.Context, worker *wulf
 	return r.Status().Patch(ctx, worker, patch)
 }
 
-func statusForRenderError(worker wulfv1alpha1.SandboxWorker, err error) wulfv1alpha1.SandboxWorkerStatus {
+func statusForRenderError(worker wulfv1alpha1.SandboxWorker, profile *wulfv1alpha1.HardeningProfileSpec, err error) wulfv1alpha1.SandboxWorkerStatus {
 	status := wulfv1alpha1.SandboxWorkerStatus{
 		Phase:                  "Failed",
 		LastObservedGeneration: worker.Generation,
-		HardeningApplied:       hardeningApplied(worker.Spec.Hardening.Profile),
+		HardeningApplied:       hardeningApplied(hardeningProfileName(&worker), profile),
 	}
 	setReadyCondition(&status, metav1.ConditionFalse, "RenderFailed", err.Error())
+	return status
+}
+
+func statusForProfileError(worker wulfv1alpha1.SandboxWorker, profile string, err error) wulfv1alpha1.SandboxWorkerStatus {
+	status := wulfv1alpha1.SandboxWorkerStatus{
+		Phase:                  "Failed",
+		LastObservedGeneration: worker.Generation,
+		HardeningApplied:       hardeningApplied(profile, nil),
+	}
+	reason := "HardeningProfileResolveFailed"
+	message := fmt.Sprintf("failed to resolve HardeningProfile %q in namespace %q: %v", profile, hardeningProfileNamespace(&worker), err)
+	if apierrors.IsNotFound(err) {
+		reason = "HardeningProfileNotFound"
+		message = fmt.Sprintf("HardeningProfile %q was not found in namespace %q", profile, hardeningProfileNamespace(&worker))
+	}
+	setReadyCondition(&status, metav1.ConditionFalse, reason, message)
 	return status
 }
 
@@ -153,20 +194,44 @@ func setReadyCondition(status *wulfv1alpha1.SandboxWorkerStatus, conditionStatus
 	})
 }
 
-func hardeningApplied(profile string) wulfv1alpha1.HardeningApplied {
+func hardeningApplied(profile string, spec *wulfv1alpha1.HardeningProfileSpec) wulfv1alpha1.HardeningApplied {
 	if profile == "" {
 		profile = "naked"
 	}
 	applied := wulfv1alpha1.HardeningApplied{Profile: profile}
-	switch profile {
-	case "seccomp-baseline", "seccomp-strict", "bpf-lsm", "full-lockdown":
-		applied.SeccompProfile = "RuntimeDefault"
-		applied.CapabilitiesDrop = []string{"ALL"}
-		applied.RunAsNonRoot = true
-	default:
+	if spec == nil {
 		applied.SeccompProfile = "none"
+		return applied
 	}
+
+	if spec.Seccomp.Type == "" || spec.Seccomp.Type == "Unconfined" {
+		applied.SeccompProfile = "none"
+	} else {
+		applied.SeccompProfile = spec.Seccomp.Type
+	}
+	applied.CapabilitiesDrop = make([]string, 0, len(spec.CapabilitiesDrop))
+	for _, capability := range spec.CapabilitiesDrop {
+		applied.CapabilitiesDrop = append(applied.CapabilitiesDrop, string(capability))
+	}
+	applied.RunAsNonRoot = spec.RunAsNonRoot
+	applied.ReadOnlyRootFS = spec.ReadOnlyRootFilesystem
+	applied.NetworkPolicy = spec.NetworkPolicyRef
+	applied.TetragonPolicy = spec.TetragonPolicyRef
 	return applied
+}
+
+func hardeningProfileName(worker *wulfv1alpha1.SandboxWorker) string {
+	if worker.Spec.Hardening.Profile == "" {
+		return "naked"
+	}
+	return worker.Spec.Hardening.Profile
+}
+
+func hardeningProfileNamespace(worker *wulfv1alpha1.SandboxWorker) string {
+	if worker.Namespace == "" {
+		return "wulf-system"
+	}
+	return worker.Namespace
 }
 
 func NamespacedName(worker *wulfv1alpha1.SandboxWorker) types.NamespacedName {

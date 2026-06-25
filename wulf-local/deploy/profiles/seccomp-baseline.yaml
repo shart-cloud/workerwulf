@@ -9,6 +9,7 @@ spec:
     type: RuntimeDefault
   capabilitiesDrop:
     - ALL
+  allowPrivilegeEscalation: false
   readOnlyRootFilesystem: false
   runAsNonRoot: true
   runAsUser: 65532

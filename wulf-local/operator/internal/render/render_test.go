@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+
 	wulfv1alpha1 "github.com/jlgore/workerwulf/wulf-local/operator/api/v1alpha1"
 )
 
@@ -77,6 +79,65 @@ func TestRenderSandboxWorkerResourcesSeccompBaselineSecurityContext(t *testing.T
 	}
 	if got := container.SecurityContext.Capabilities.Drop[0]; got != "ALL" {
 		t.Fatalf("capabilities.drop[0] = %q, want ALL", got)
+	}
+}
+
+func TestRenderSandboxWorkerResourcesResolvedSeccompBaselineProfile(t *testing.T) {
+	worker := sampleWorker()
+	worker.Spec.Hardening.Profile = "seccomp-baseline"
+	allowPrivilegeEscalation := false
+	profile := wulfv1alpha1.HardeningProfileSpec{
+		Seccomp:                  wulfv1alpha1.SeccompSpec{Type: "RuntimeDefault"},
+		AllowPrivilegeEscalation: &allowPrivilegeEscalation,
+		CapabilitiesDrop:         []corev1.Capability{corev1.Capability("ALL")},
+		ReadOnlyRootFilesystem:   true,
+		RunAsNonRoot:             true,
+		RunAsUser:                65532,
+	}
+
+	resources, err := RenderSandboxWorkerResources(worker, Options{HardeningProfile: &profile})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+
+	container := resources.Deployment.Spec.Template.Spec.Containers[0]
+	if container.SecurityContext == nil {
+		t.Fatal("securityContext = nil")
+	}
+	if container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation {
+		t.Fatalf("allowPrivilegeEscalation = %v, want false", container.SecurityContext.AllowPrivilegeEscalation)
+	}
+	if container.SecurityContext.ReadOnlyRootFilesystem == nil || !*container.SecurityContext.ReadOnlyRootFilesystem {
+		t.Fatalf("readOnlyRootFilesystem = %v, want true", container.SecurityContext.ReadOnlyRootFilesystem)
+	}
+	if container.SecurityContext.RunAsNonRoot == nil || !*container.SecurityContext.RunAsNonRoot {
+		t.Fatalf("runAsNonRoot = %v, want true", container.SecurityContext.RunAsNonRoot)
+	}
+	if container.SecurityContext.SeccompProfile == nil || container.SecurityContext.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Fatalf("seccompProfile = %#v, want RuntimeDefault", container.SecurityContext.SeccompProfile)
+	}
+	if got := container.SecurityContext.Capabilities.Drop[0]; got != "ALL" {
+		t.Fatalf("capabilities.drop[0] = %q, want ALL", got)
+	}
+}
+
+func TestRenderSandboxWorkerResourcesResolvedNakedProfile(t *testing.T) {
+	worker := sampleWorker()
+	worker.Spec.Hardening.Profile = "naked"
+	profile := wulfv1alpha1.HardeningProfileSpec{
+		Seccomp:                wulfv1alpha1.SeccompSpec{Type: "Unconfined"},
+		ReadOnlyRootFilesystem: false,
+		RunAsNonRoot:           false,
+	}
+
+	resources, err := RenderSandboxWorkerResources(worker, Options{HardeningProfile: &profile})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+
+	container := resources.Deployment.Spec.Template.Spec.Containers[0]
+	if container.SecurityContext != nil {
+		t.Fatalf("securityContext = %#v, want nil for naked baseline", container.SecurityContext)
 	}
 }
 
