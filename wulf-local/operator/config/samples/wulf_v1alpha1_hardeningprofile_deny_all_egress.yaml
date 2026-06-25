@@ -1,0 +1,16 @@
+apiVersion: wulf.jaredgore.com/v1alpha1
+kind: HardeningProfile
+metadata:
+  name: deny-all-egress
+  namespace: wulf-system
+spec:
+  description: "RuntimeDefault seccomp plus an operator-managed NetworkPolicy that denies all egress"
+  seccomp:
+    type: RuntimeDefault
+  capabilitiesDrop:
+    - ALL
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  runAsNonRoot: true
+  runAsUser: 65532
+  networkPolicyRef: deny-all-egress

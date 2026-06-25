@@ -6,6 +6,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -14,9 +15,10 @@ import (
 )
 
 type Resources struct {
-	ConfigMap  *corev1.ConfigMap
-	Deployment *appsv1.Deployment
-	Service    *corev1.Service
+	ConfigMap     *corev1.ConfigMap
+	Deployment    *appsv1.Deployment
+	Service       *corev1.Service
+	NetworkPolicy *networkingv1.NetworkPolicy
 }
 
 func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Options) (Resources, error) {
@@ -127,7 +129,9 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 		}
 	}
 
-	return Resources{ConfigMap: configMap, Deployment: deployment, Service: service}, nil
+	networkPolicy := networkPolicyResourceFor(normalized, labels)
+
+	return Resources{ConfigMap: configMap, Deployment: deployment, Service: service, NetworkPolicy: networkPolicy}, nil
 }
 
 func copyLabels(labels map[string]string) map[string]string {
@@ -148,6 +152,34 @@ func boolPtr(value bool) *bool {
 
 func int64Ptr(value int64) *int64 {
 	return &value
+}
+
+func NetworkPolicyName(worker wulfv1alpha1.SandboxWorker) string {
+	return worker.Name + "-network-policy"
+}
+
+func networkPolicyResourceFor(worker normalizedWorker, labels map[string]string) *networkingv1.NetworkPolicy {
+	switch worker.NetworkPolicyRef {
+	case "":
+		return nil
+	case NetworkPolicyDenyAllEgress:
+		return &networkingv1.NetworkPolicy{
+			TypeMeta: metav1.TypeMeta{APIVersion: "networking.k8s.io/v1", Kind: "NetworkPolicy"},
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      worker.NetworkPolicyName,
+				Namespace: worker.Namespace,
+				Labels:    copyLabels(labels),
+			},
+			Spec: networkingv1.NetworkPolicySpec{
+				PodSelector: metav1.LabelSelector{
+					MatchLabels: map[string]string{"app.kubernetes.io/name": worker.Name},
+				},
+				PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			},
+		}
+	default:
+		return nil
+	}
 }
 
 func hardeningProfileSpecFor(profile string, resolved *wulfv1alpha1.HardeningProfileSpec) *wulfv1alpha1.HardeningProfileSpec {

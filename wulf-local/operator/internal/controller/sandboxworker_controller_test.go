@@ -8,12 +8,15 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	wulfv1alpha1 "github.com/jlgore/workerwulf/wulf-local/operator/api/v1alpha1"
 )
@@ -145,6 +148,87 @@ func TestDeletingReferencedHardeningProfileMovesWorkerToFailed(t *testing.T) {
 	}
 }
 
+func TestNetworkPolicyRefAppliesDenyAllEgressAndDeletesWhenRemoved(t *testing.T) {
+	ctx := context.Background()
+	worker := testWorker("network-policy-worker")
+	worker.Spec.Hardening.Profile = "networked"
+	profile := testHardeningProfile("networked", worker.Namespace, wulfv1alpha1.HardeningProfileSpec{
+		NetworkPolicyRef: "deny-all-egress",
+	})
+	reconciler := newTestReconciler(t, &worker, &profile)
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: NamespacedName(&worker)}); err != nil {
+		t.Fatalf("initial Reconcile() error = %v", err)
+	}
+
+	var policy networkingv1.NetworkPolicy
+	policyKey := client.ObjectKey{Name: "network-policy-worker-network-policy", Namespace: worker.Namespace}
+	if err := reconciler.Get(ctx, policyKey, &policy); err != nil {
+		t.Fatalf("Get(NetworkPolicy) error = %v", err)
+	}
+	if got := policy.Spec.PodSelector.MatchLabels["app.kubernetes.io/name"]; got != worker.Name {
+		t.Fatalf("podSelector app name = %q, want %q", got, worker.Name)
+	}
+	if len(policy.Spec.PolicyTypes) != 1 || policy.Spec.PolicyTypes[0] != networkingv1.PolicyTypeEgress {
+		t.Fatalf("policyTypes = %#v, want [Egress]", policy.Spec.PolicyTypes)
+	}
+	if len(policy.Spec.Egress) != 0 {
+		t.Fatalf("egress rules = %#v, want none for deny-all egress", policy.Spec.Egress)
+	}
+
+	profile.Spec.NetworkPolicyRef = ""
+	if err := reconciler.Update(ctx, &profile); err != nil {
+		t.Fatalf("Update(HardeningProfile) error = %v", err)
+	}
+	requests := reconciler.requestsForHardeningProfile(ctx, &profile)
+	wantRequests := []ctrl.Request{{NamespacedName: NamespacedName(&worker)}}
+	if !reflect.DeepEqual(requests, wantRequests) {
+		t.Fatalf("requestsForHardeningProfile() = %#v, want %#v", requests, wantRequests)
+	}
+	for _, request := range requests {
+		if _, err := reconciler.Reconcile(ctx, request); err != nil {
+			t.Fatalf("Reconcile(%s) after removing networkPolicyRef error = %v", request.NamespacedName, err)
+		}
+	}
+
+	err := reconciler.Get(ctx, policyKey, &policy)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("Get(NetworkPolicy) after removing networkPolicyRef error = %v, want NotFound", err)
+	}
+}
+
+func TestUnknownNetworkPolicyRefSetsFailedStatus(t *testing.T) {
+	ctx := context.Background()
+	worker := testWorker("unknown-network-policy-worker")
+	worker.Spec.Hardening.Profile = "unknown-network-policy"
+	profile := testHardeningProfile("unknown-network-policy", worker.Namespace, wulfv1alpha1.HardeningProfileSpec{
+		NetworkPolicyRef: "public-egress",
+	})
+	reconciler := newTestReconciler(t, &worker, &profile)
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: NamespacedName(&worker)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	var got wulfv1alpha1.SandboxWorker
+	if err := reconciler.Get(ctx, NamespacedName(&worker), &got); err != nil {
+		t.Fatalf("Get(SandboxWorker) error = %v", err)
+	}
+	if got.Status.Phase != "Failed" {
+		t.Fatalf("status.phase = %q, want Failed", got.Status.Phase)
+	}
+	condition := readyCondition(got.Status.Conditions)
+	if condition == nil {
+		t.Fatal("Ready condition missing")
+	}
+	if condition.Reason != "RenderFailed" {
+		t.Fatalf("Ready reason = %q, want RenderFailed", condition.Reason)
+	}
+	if !strings.Contains(condition.Message, `unsupported networkPolicyRef "public-egress"`) {
+		t.Fatalf("Ready message = %q, want unsupported networkPolicyRef detail", condition.Message)
+	}
+}
+
 func TestUnrelatedHardeningProfileChangeDoesNotEnqueueWorkers(t *testing.T) {
 	worker := testWorker("seccomp-worker")
 	worker.Spec.Hardening.Profile = "seccomp-baseline"
@@ -181,6 +265,23 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *SandboxWorkerRec
 	builder := fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(&wulfv1alpha1.SandboxWorker{}).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Patch: func(ctx context.Context, c client.WithWatch, object client.Object, patch client.Patch, opts ...client.PatchOption) error {
+				if _, ok := object.(*networkingv1.NetworkPolicy); !ok || patch != client.Apply {
+					return c.Patch(ctx, object, patch, opts...)
+				}
+				var current networkingv1.NetworkPolicy
+				key := client.ObjectKeyFromObject(object)
+				if err := c.Get(ctx, key, &current); err != nil {
+					if apierrors.IsNotFound(err) {
+						return c.Create(ctx, object)
+					}
+					return err
+				}
+				object.SetResourceVersion(current.ResourceVersion)
+				return c.Update(ctx, object)
+			},
+		}).
 		WithIndex(
 			&wulfv1alpha1.SandboxWorker{},
 			sandboxWorkerHardeningProfileField,
@@ -206,6 +307,9 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	}
 	if err := appsv1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme(appsv1) error = %v", err)
+	}
+	if err := networkingv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme(networkingv1) error = %v", err)
 	}
 	if err := wulfv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme(wulf) error = %v", err)

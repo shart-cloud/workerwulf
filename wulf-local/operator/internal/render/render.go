@@ -13,6 +13,7 @@ import (
 )
 
 const DefaultImage = "ghcr.io/jlgore/wulf-local-workerd:0.1.0"
+const NetworkPolicyDenyAllEgress = "deny-all-egress"
 
 type Options struct {
 	Image            string
@@ -65,6 +66,14 @@ func RenderSandboxWorker(worker wulfv1alpha1.SandboxWorker, opts Options) ([]Obj
 		objects = append(objects, Object{Kind: "Service", Name: normalized.Name, YAML: service})
 	}
 
+	if normalized.NetworkPolicyRef != "" {
+		networkPolicy, err := renderTemplate("networkpolicy", networkPolicyTemplate, normalized)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, Object{Kind: "NetworkPolicy", Name: normalized.NetworkPolicyName, YAML: networkPolicy})
+	}
+
 	return objects, nil
 }
 
@@ -89,6 +98,8 @@ type normalizedWorker struct {
 	CPULimit           string
 	MemoryLimit        string
 	SecurityContext    string
+	NetworkPolicyRef   string
+	NetworkPolicyName  string
 }
 
 type labelPair struct {
@@ -138,6 +149,10 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 		profile = "naked"
 	}
 	hardeningSpec := hardeningProfileSpecFor(profile, opts.HardeningProfile)
+	networkPolicyRef, err := networkPolicyRefFor(hardeningSpec)
+	if err != nil {
+		return normalizedWorker{}, err
+	}
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":               worker.Name,
@@ -170,6 +185,8 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 		CPULimit:           defaultString(resources.Limits.CPU, "500m"),
 		MemoryLimit:        defaultString(resources.Limits.Memory, "256Mi"),
 		SecurityContext:    securityContextFor(profile, hardeningSpec),
+		NetworkPolicyRef:   networkPolicyRef,
+		NetworkPolicyName:  NetworkPolicyName(worker),
 	}
 	if normalized.CompatibilityDate == "" {
 		normalized.CompatibilityDate = "2024-09-23"
@@ -220,6 +237,18 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
+}
+
+func networkPolicyRefFor(spec *wulfv1alpha1.HardeningProfileSpec) (string, error) {
+	if spec == nil || spec.NetworkPolicyRef == "" {
+		return "", nil
+	}
+	switch spec.NetworkPolicyRef {
+	case NetworkPolicyDenyAllEgress:
+		return spec.NetworkPolicyRef, nil
+	default:
+		return "", fmt.Errorf("unsupported networkPolicyRef %q", spec.NetworkPolicyRef)
+	}
 }
 
 func renderWorkerdConfig(worker normalizedWorker) (string, error) {
@@ -449,4 +478,22 @@ spec:
     - name: http
       port: {{ .Port }}
       targetPort: http
+`
+
+const networkPolicyTemplate = `apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .NetworkPolicyName }}
+  namespace: {{ .Namespace }}
+  labels:
+{{- range .LabelPairs }}
+    {{ .Key }}: {{ .Value }}
+{{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Name }}
+  policyTypes:
+    - Egress
+  egress: []
 `
