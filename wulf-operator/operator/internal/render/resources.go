@@ -9,16 +9,30 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	wulfv1alpha1 "github.com/jlgore/workerwulf/wulf-operator/operator/api/v1alpha1"
 )
+
+// TracingPolicyGVK is the Tetragon namespaced tracing-policy kind the operator
+// renders. It is applied as an unstructured object so the operator does not take
+// a build-time dependency on Tetragon's Go API. Resolved at runtime via the
+// cluster RESTMapper, so it only needs the Tetragon CRDs installed when a
+// HardeningProfile actually sets tetragonPolicyRef.
+var TracingPolicyGVK = schema.GroupVersionKind{
+	Group:   "cilium.io",
+	Version: "v1alpha1",
+	Kind:    "TracingPolicyNamespaced",
+}
 
 type Resources struct {
 	ConfigMap     *corev1.ConfigMap
 	Deployment    *appsv1.Deployment
 	Service       *corev1.Service
 	NetworkPolicy *networkingv1.NetworkPolicy
+	TracingPolicy *unstructured.Unstructured
 }
 
 func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Options) (Resources, error) {
@@ -162,7 +176,78 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 
 	networkPolicy := networkPolicyResourceFor(normalized, labels)
 
-	return Resources{ConfigMap: configMap, Deployment: deployment, Service: service, NetworkPolicy: networkPolicy}, nil
+	var tracingPolicy *unstructured.Unstructured
+	if normalized.TetragonPolicyRef != "" {
+		tracingPolicy = tracingPolicyResource(normalized)
+	}
+
+	return Resources{ConfigMap: configMap, Deployment: deployment, Service: service, NetworkPolicy: networkPolicy, TracingPolicy: tracingPolicy}, nil
+}
+
+// TetragonPolicyName is the deterministic name of the per-worker
+// TracingPolicyNamespaced rendered when the resolved HardeningProfile sets
+// tetragonPolicyRef.
+func TetragonPolicyName(worker wulfv1alpha1.SandboxWorker) string {
+	return worker.Name + "-tracing"
+}
+
+// tracingPolicyResource builds the per-worker TracingPolicyNamespaced. It is the
+// single source of truth for both render paths: the typed controller path uses
+// the object directly, and the string preview path marshals it to YAML. The
+// policy is scoped to this worker's pods via podSelector and to the workerd
+// binary via matchBinaries, so it neither traces nor is garbage-collected with
+// any other worker. The __x64_sys_* kprobes are x86_64-specific; on other
+// architectures the call names must change.
+func tracingPolicyResource(worker normalizedWorker) *unstructured.Unstructured {
+	binaries := []interface{}{
+		"/usr/local/bin/workerd",
+		"/usr/local/lib/node_modules/workerd/bin/workerd",
+		"/usr/local/lib/node_modules/workerd/node_modules/@cloudflare/workerd-linux-64/bin/workerd",
+		"/usr/bin/workerd",
+	}
+	arg := func(index int64, argType string) interface{} {
+		return map[string]interface{}{"index": index, "type": argType}
+	}
+	kprobe := func(call string, args ...interface{}) interface{} {
+		return map[string]interface{}{
+			"call":    call,
+			"syscall": true,
+			"selectors": []interface{}{
+				map[string]interface{}{
+					"matchBinaries": []interface{}{
+						map[string]interface{}{"operator": "In", "values": binaries},
+					},
+				},
+			},
+			"args": args,
+		}
+	}
+
+	labelsObj := make(map[string]interface{}, len(worker.Labels))
+	for key, value := range worker.Labels {
+		labelsObj[key] = value
+	}
+
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": TracingPolicyGVK.GroupVersion().String(),
+		"kind":       TracingPolicyGVK.Kind,
+		"metadata": map[string]interface{}{
+			"name":      worker.TetragonPolicyName,
+			"namespace": worker.Namespace,
+			"labels":    labelsObj,
+		},
+		"spec": map[string]interface{}{
+			"podSelector": map[string]interface{}{
+				"matchLabels": map[string]interface{}{"app.kubernetes.io/name": worker.Name},
+			},
+			"kprobes": []interface{}{
+				kprobe("__x64_sys_openat", arg(1, "string"), arg(2, "int")),
+				kprobe("__x64_sys_connect", arg(1, "sockaddr")),
+				kprobe("__x64_sys_execve", arg(0, "string")),
+				kprobe("__x64_sys_mmap", arg(2, "int"), arg(3, "int")),
+			},
+		},
+	}}
 }
 
 func copyLabels(labels map[string]string) map[string]string {

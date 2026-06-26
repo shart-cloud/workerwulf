@@ -1,0 +1,16 @@
+apiVersion: wulf.jaredgore.com/v1alpha1
+kind: HardeningProfile
+metadata:
+  name: traced-syscalls
+  namespace: wulf-system
+spec:
+  description: "seccomp-baseline hardening plus an operator-managed Tetragon TracingPolicyNamespaced that traces the workerd binary's openat/connect/execve/mmap syscalls, scoped to the worker's pods"
+  seccomp:
+    type: RuntimeDefault
+  capabilitiesDrop:
+    - ALL
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  tetragonPolicyRef: workerd-syscalls

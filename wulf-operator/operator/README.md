@@ -92,6 +92,8 @@ The reconciler uses server-side apply with field owner
 - `Deployment`
 - `Service`
 - `NetworkPolicy`, when requested by the resolved `HardeningProfile`
+- `TracingPolicyNamespaced` (Tetragon), when requested by the resolved
+  `HardeningProfile`
 - `SandboxWorker.status`
 
 The reconciler resolves `spec.hardening.profile` as a namespaced
@@ -112,6 +114,18 @@ Any other value sets `SandboxWorker.status.phase: Failed` with a
 `RenderFailed` condition, so unsupported policy names fail closed instead of
 silently rendering an unprotected pod.
 
+A `HardeningProfile` may also set `spec.tetragonPolicyRef`. The only supported
+value is `workerd-syscalls`, which makes the operator render a per-worker
+`TracingPolicyNamespaced` (`<worker>-tracing`). The policy is scoped by
+`podSelector` to that worker's pods and by `matchBinaries` to the workerd
+binary, tracing `openat`/`connect`/`execve`/`mmap`. It carries an owner
+reference to the `SandboxWorker`, so it is garbage-collected with the worker.
+Like `networkPolicyRef`, an unsupported value fails closed with `RenderFailed`.
+The policy is applied as an unstructured object resolved at runtime, so it only
+requires the Tetragon CRDs when a profile actually opts in; the kprobe call
+names are x86_64-specific. See `deploy/profiles/traced-syscalls.yaml` and
+`config/samples/wulf_v1alpha1_sandboxworker_traced.yaml`.
+
 ## Next controller step
 
 When `kubebuilder` or `controller-gen` is available, this module can be promoted
@@ -119,6 +133,7 @@ to a controller-runtime project without changing the public CRD shape:
 
 1. Replace the manually maintained CRD and deepcopy files with generated output.
 2. Add ConfigMap and Git-backed script sources.
-3. Add Tetragon policy rendering from the profile refs.
+3. Watch the rendered `TracingPolicyNamespaced` (an `Owns` on the unstructured
+   kind) so out-of-band edits reconcile, and add non-x86_64 kprobe variants.
 4. Decide whether missing-profile failures should leave existing deployments in
    place or actively scale/delete them.

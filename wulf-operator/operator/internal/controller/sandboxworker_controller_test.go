@@ -11,6 +11,7 @@ import (
 	networkingv1 "k8s.io/api/networking/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -19,6 +20,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	wulfv1alpha1 "github.com/jlgore/workerwulf/wulf-operator/operator/api/v1alpha1"
+	"github.com/jlgore/workerwulf/wulf-operator/operator/internal/render"
 )
 
 func TestReconcileMissingHardeningProfileSetsFailedStatus(t *testing.T) {
@@ -229,6 +231,82 @@ func TestUnknownNetworkPolicyRefSetsFailedStatus(t *testing.T) {
 	}
 }
 
+func TestTetragonPolicyRefAppliesTracingPolicyAndDeletesWhenRemoved(t *testing.T) {
+	ctx := context.Background()
+	worker := testWorker("traced-worker")
+	worker.Spec.Hardening.Profile = "traced"
+	profile := testHardeningProfile("traced", worker.Namespace, wulfv1alpha1.HardeningProfileSpec{
+		Seccomp:           wulfv1alpha1.SeccompSpec{Type: "RuntimeDefault"},
+		TetragonPolicyRef: render.TetragonPolicyWorkerdSyscalls,
+	})
+	reconciler := newTestReconciler(t, &worker, &profile)
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: NamespacedName(&worker)}); err != nil {
+		t.Fatalf("initial Reconcile() error = %v", err)
+	}
+
+	policyKey := client.ObjectKey{Name: render.TetragonPolicyName(worker), Namespace: worker.Namespace}
+	policy := &unstructured.Unstructured{}
+	policy.SetGroupVersionKind(render.TracingPolicyGVK)
+	if err := reconciler.Get(ctx, policyKey, policy); err != nil {
+		t.Fatalf("Get(TracingPolicyNamespaced) error = %v", err)
+	}
+	selector, found, err := unstructured.NestedString(policy.Object, "spec", "podSelector", "matchLabels", "app.kubernetes.io/name")
+	if err != nil || !found || selector != worker.Name {
+		t.Fatalf("podSelector app name = %q (found=%v err=%v), want %q", selector, found, err, worker.Name)
+	}
+
+	// status must reflect the applied policy ref for the Examiner Portal.
+	var got wulfv1alpha1.SandboxWorker
+	if err := reconciler.Get(ctx, NamespacedName(&worker), &got); err != nil {
+		t.Fatalf("Get(SandboxWorker) error = %v", err)
+	}
+	if got.Status.HardeningApplied.TetragonPolicy != render.TetragonPolicyWorkerdSyscalls {
+		t.Fatalf("status.hardeningApplied.tetragonPolicy = %q, want %q", got.Status.HardeningApplied.TetragonPolicy, render.TetragonPolicyWorkerdSyscalls)
+	}
+
+	// Drop the ref: the operator must delete the now-orphaned policy.
+	profile.Spec.TetragonPolicyRef = ""
+	if err := reconciler.Update(ctx, &profile); err != nil {
+		t.Fatalf("Update(HardeningProfile) error = %v", err)
+	}
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: NamespacedName(&worker)}); err != nil {
+		t.Fatalf("Reconcile() after removing tetragonPolicyRef error = %v", err)
+	}
+	if err := reconciler.Get(ctx, policyKey, policy); !apierrors.IsNotFound(err) {
+		t.Fatalf("Get(TracingPolicyNamespaced) after removing ref error = %v, want NotFound", err)
+	}
+}
+
+func TestUnknownTetragonPolicyRefSetsFailedStatus(t *testing.T) {
+	ctx := context.Background()
+	worker := testWorker("unknown-tetragon-worker")
+	worker.Spec.Hardening.Profile = "unknown-tetragon"
+	profile := testHardeningProfile("unknown-tetragon", worker.Namespace, wulfv1alpha1.HardeningProfileSpec{
+		TetragonPolicyRef: "exfil-everything",
+	})
+	reconciler := newTestReconciler(t, &worker, &profile)
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: NamespacedName(&worker)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	var got wulfv1alpha1.SandboxWorker
+	if err := reconciler.Get(ctx, NamespacedName(&worker), &got); err != nil {
+		t.Fatalf("Get(SandboxWorker) error = %v", err)
+	}
+	if got.Status.Phase != "Failed" {
+		t.Fatalf("status.phase = %q, want Failed", got.Status.Phase)
+	}
+	condition := readyCondition(got.Status.Conditions)
+	if condition == nil || condition.Reason != "RenderFailed" {
+		t.Fatalf("Ready condition = %#v, want RenderFailed", condition)
+	}
+	if !strings.Contains(condition.Message, `unsupported tetragonPolicyRef "exfil-everything"`) {
+		t.Fatalf("Ready message = %q, want unsupported tetragonPolicyRef detail", condition.Message)
+	}
+}
+
 func TestUnrelatedHardeningProfileChangeDoesNotEnqueueWorkers(t *testing.T) {
 	worker := testWorker("seccomp-worker")
 	worker.Spec.Hardening.Profile = "seccomp-baseline"
@@ -267,18 +345,28 @@ func newTestReconciler(t *testing.T, objects ...client.Object) *SandboxWorkerRec
 		WithStatusSubresource(&wulfv1alpha1.SandboxWorker{}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Patch: func(ctx context.Context, c client.WithWatch, object client.Object, patch client.Patch, opts ...client.PatchOption) error {
-				if _, ok := object.(*networkingv1.NetworkPolicy); !ok || patch != client.Apply {
+				// The fake client does not implement server-side apply for these
+				// kinds, so emulate create-or-update for the objects the
+				// reconciler applies that way (NetworkPolicy and the unstructured
+				// Tetragon TracingPolicyNamespaced).
+				if patch != client.Apply {
 					return c.Patch(ctx, object, patch, opts...)
 				}
-				var current networkingv1.NetworkPolicy
+				switch object.(type) {
+				case *networkingv1.NetworkPolicy:
+				case *unstructured.Unstructured:
+				default:
+					return c.Patch(ctx, object, patch, opts...)
+				}
+				current := object.DeepCopyObject().(client.Object)
 				key := client.ObjectKeyFromObject(object)
-				if err := c.Get(ctx, key, &current); err != nil {
+				if err := c.Get(ctx, key, current); err != nil {
 					if apierrors.IsNotFound(err) {
 						return c.Create(ctx, object)
 					}
 					return err
 				}
-				object.SetResourceVersion(current.ResourceVersion)
+				object.SetResourceVersion(current.GetResourceVersion())
 				return c.Update(ctx, object)
 			},
 		}).
@@ -314,6 +402,14 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	if err := wulfv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme(wulf) error = %v", err)
 	}
+	// Tetragon's TracingPolicyNamespaced has no Go type in our deps; register it
+	// as unstructured so the fake client tracker can store what the controller
+	// server-side applies.
+	scheme.AddKnownTypeWithName(render.TracingPolicyGVK, &unstructured.Unstructured{})
+	scheme.AddKnownTypeWithName(
+		render.TracingPolicyGVK.GroupVersion().WithKind(render.TracingPolicyGVK.Kind+"List"),
+		&unstructured.UnstructuredList{},
+	)
 	return scheme
 }
 
