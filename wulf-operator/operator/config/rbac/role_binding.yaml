@@ -1,0 +1,12 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: wulf-operator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: wulf-operator
+subjects:
+  - kind: ServiceAccount
+    name: wulf-operator
+    namespace: wulf-system
