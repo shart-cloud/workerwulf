@@ -9,11 +9,20 @@ import (
 	"strings"
 	"text/template"
 
+	"sigs.k8s.io/yaml"
+
 	wulfv1alpha1 "github.com/jlgore/workerwulf/wulf-operator/operator/api/v1alpha1"
 )
 
 const DefaultImage = "ghcr.io/jlgore/wulf-operator-workerd:0.1.0"
 const NetworkPolicyDenyAllEgress = "deny-all-egress"
+
+// TetragonPolicyWorkerdSyscalls is the only supported HardeningProfile
+// tetragonPolicyRef. It renders a per-worker TracingPolicyNamespaced that
+// traces the workerd binary's openat/connect/execve/mmap syscalls. Like
+// networkPolicyRef, any other value fails closed rather than silently
+// rendering nothing.
+const TetragonPolicyWorkerdSyscalls = "workerd-syscalls"
 
 // DefaultInspectorPort is the V8 inspector (Chrome DevTools Protocol) port
 // workerd binds when spec.runtime.v8Inspector is set.
@@ -78,6 +87,14 @@ func RenderSandboxWorker(worker wulfv1alpha1.SandboxWorker, opts Options) ([]Obj
 		objects = append(objects, Object{Kind: "NetworkPolicy", Name: normalized.NetworkPolicyName, YAML: networkPolicy})
 	}
 
+	if normalized.TetragonPolicyRef != "" {
+		tracingYAML, err := yaml.Marshal(tracingPolicyResource(normalized).Object)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, Object{Kind: "TracingPolicyNamespaced", Name: normalized.TetragonPolicyName, YAML: string(tracingYAML)})
+	}
+
 	return objects, nil
 }
 
@@ -104,6 +121,8 @@ type normalizedWorker struct {
 	SecurityContext    string
 	NetworkPolicyRef   string
 	NetworkPolicyName  string
+	TetragonPolicyRef  string
+	TetragonPolicyName string
 	ResultSinkURL      string
 	V8Inspector        bool
 	InspectorPort      int
@@ -163,6 +182,10 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 	if err != nil {
 		return normalizedWorker{}, err
 	}
+	tetragonPolicyRef, err := tetragonPolicyRefFor(hardeningSpec)
+	if err != nil {
+		return normalizedWorker{}, err
+	}
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":               worker.Name,
@@ -197,6 +220,8 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 		SecurityContext:    securityContextFor(profile, hardeningSpec),
 		NetworkPolicyRef:   networkPolicyRef,
 		NetworkPolicyName:  NetworkPolicyName(worker),
+		TetragonPolicyRef:  tetragonPolicyRef,
+		TetragonPolicyName: TetragonPolicyName(worker),
 		ResultSinkURL:      worker.Spec.Instrumentation.ResultSink.Endpoint,
 		V8Inspector:        worker.Spec.Runtime.V8Inspector,
 		InspectorPort:      DefaultInspectorPort,
@@ -288,6 +313,18 @@ func networkPolicyRefFor(spec *wulfv1alpha1.HardeningProfileSpec) (string, error
 		return spec.NetworkPolicyRef, nil
 	default:
 		return "", fmt.Errorf("unsupported networkPolicyRef %q", spec.NetworkPolicyRef)
+	}
+}
+
+func tetragonPolicyRefFor(spec *wulfv1alpha1.HardeningProfileSpec) (string, error) {
+	if spec == nil || spec.TetragonPolicyRef == "" {
+		return "", nil
+	}
+	switch spec.TetragonPolicyRef {
+	case TetragonPolicyWorkerdSyscalls:
+		return spec.TetragonPolicyRef, nil
+	default:
+		return "", fmt.Errorf("unsupported tetragonPolicyRef %q", spec.TetragonPolicyRef)
 	}
 }
 
