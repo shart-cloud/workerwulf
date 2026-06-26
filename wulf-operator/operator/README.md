@@ -126,6 +126,28 @@ requires the Tetragon CRDs when a profile actually opts in; the kprobe call
 names are x86_64-specific. See `deploy/profiles/traced-syscalls.yaml` and
 `config/samples/wulf_v1alpha1_sandboxworker_traced.yaml`.
 
+A `HardeningProfile` may additionally set `spec.tetragonEnforceRef`, which is
+orthogonal to `tetragonPolicyRef`: tracing only observes, enforcement denies. The
+only supported value is `bpf-lsm-deny`, which renders a second per-worker
+`TracingPolicyNamespaced` (`<worker>-enforce`) using Tetragon BPF-LSM hooks
+(`spec.lsmhooks`: `socket_connect`, `bprm_check_security`, `ptrace_access_check`)
+for the workerd binary, each with `action: Override` returning `-EPERM`. A denied
+operation fails in place while the worker keeps running, so a probe can observe
+and report the denial. BPF-LSM hooks return access decisions natively, so Override
+is reliable without depending on the kernel error-injection allowlist (the reason
+this uses `lsmhooks` rather than a kprobe on the `security_*` functions), and the
+hook names are architecture-independent. The hook set covers only operations
+workerd should never perform; `file_open` is deliberately excluded, since a
+blanket file deny scoped to the workerd binary would break workerd's own file
+access — meaningful file enforcement needs path-scoped selectors and is a
+follow-up. This was verified on a Talos v1.7.0 Tetragon cluster with BPF-LSM
+enabled (`socket_connect` Override blocked egress, including DNS, while the pod
+stayed `Running`); on a cluster without BPF-LSM the policy applies but does not
+block. Like the other refs it is scoped by `podSelector`/`matchBinaries`,
+owner-referenced for GC, and fails closed with `RenderFailed` on an unsupported
+value. See `deploy/profiles/bpf-lsm.yaml` and
+`config/samples/wulf_v1alpha1_sandboxworker_bpf_lsm.yaml`.
+
 ## Next controller step
 
 When `kubebuilder` or `controller-gen` is available, this module can be promoted

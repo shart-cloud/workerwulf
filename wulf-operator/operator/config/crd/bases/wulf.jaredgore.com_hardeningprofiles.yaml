@@ -54,6 +54,8 @@ spec:
                   type: string
                 tetragonPolicyRef:
                   type: string
+                tetragonEnforceRef:
+                  type: string
             status:
               type: object
               properties:

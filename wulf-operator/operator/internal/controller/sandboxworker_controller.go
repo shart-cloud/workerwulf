@@ -88,6 +88,14 @@ func (r *SandboxWorkerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
+	if resources.EnforcementPolicy != nil {
+		if err := r.applyOwned(ctx, &worker, resources.EnforcementPolicy); err != nil {
+			return ctrl.Result{}, err
+		}
+	} else if err := r.deleteEnforcementPolicy(ctx, &worker); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	status, err := r.observedStatus(ctx, &worker, &profile.Spec)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -148,6 +156,22 @@ func (r *SandboxWorkerReconciler) deleteTracingPolicy(ctx context.Context, worke
 	// on a cluster without the Tetragon CRDs, the kind itself is unknown.
 	// Treat both NotFound and "no matching kind" as already-absent so the
 	// common naked/seccomp path never wedges the reconcile.
+	err := r.Delete(ctx, policy)
+	if apimeta.IsNoMatchError(err) {
+		return nil
+	}
+	return client.IgnoreNotFound(err)
+}
+
+func (r *SandboxWorkerReconciler) deleteEnforcementPolicy(ctx context.Context, worker *wulfv1alpha1.SandboxWorker) error {
+	policy := &unstructured.Unstructured{}
+	policy.SetGroupVersionKind(render.TracingPolicyGVK)
+	policy.SetName(render.EnforcementPolicyName(*worker))
+	policy.SetNamespace(worker.Namespace)
+	// Mirror deleteTracingPolicy: a worker whose profile never set
+	// tetragonEnforceRef has no policy, and on a cluster without the Tetragon
+	// CRDs the kind itself is unknown. Treat NotFound and "no matching kind" as
+	// already-absent so the common naked/seccomp path never wedges.
 	err := r.Delete(ctx, policy)
 	if apimeta.IsNoMatchError(err) {
 		return nil
@@ -303,6 +327,7 @@ func hardeningApplied(profile string, spec *wulfv1alpha1.HardeningProfileSpec) w
 	applied.ReadOnlyRootFS = spec.ReadOnlyRootFilesystem
 	applied.NetworkPolicy = spec.NetworkPolicyRef
 	applied.TetragonPolicy = spec.TetragonPolicyRef
+	applied.TetragonEnforce = spec.TetragonEnforceRef
 	return applied
 }
 
