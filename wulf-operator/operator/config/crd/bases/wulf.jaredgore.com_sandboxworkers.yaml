@@ -101,6 +101,8 @@ spec:
                               type: string
                     maxIsolates:
                       type: integer
+                      minimum: 0
+                      maximum: 8
                     requestTimeoutMs:
                       type: integer
                     coLocateWith:
