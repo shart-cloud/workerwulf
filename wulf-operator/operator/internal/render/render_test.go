@@ -277,7 +277,6 @@ func TestRenderSandboxWorkerResourcesTCPProbes(t *testing.T) {
 
 func TestRenderSandboxWorkerResourcesRejectsUnimplementedSpec(t *testing.T) {
 	cases := map[string]func(*wulfv1alpha1.SandboxWorker){
-		"maxIsolates":      func(w *wulfv1alpha1.SandboxWorker) { w.Spec.Runtime.MaxIsolates = 4 },
 		"requestTimeoutMs": func(w *wulfv1alpha1.SandboxWorker) { w.Spec.Runtime.RequestTimeoutMs = 1000 },
 		"coLocateWith":     func(w *wulfv1alpha1.SandboxWorker) { w.Spec.Runtime.CoLocateWith = "other" },
 		"tracingPolicy":    func(w *wulfv1alpha1.SandboxWorker) { w.Spec.Instrumentation.TracingPolicy = "syscalls" },

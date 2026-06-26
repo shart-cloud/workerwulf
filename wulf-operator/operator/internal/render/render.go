@@ -149,6 +149,48 @@ type normalizedWorker struct {
 	ResultSinkURL       string
 	V8Inspector         bool
 	InspectorPort       int
+	MaxIsolates         int
+	Isolates            []isolateInstance
+}
+
+// isolateInstance is one co-located workerd isolate: a service + a socket in the
+// same workerd process. When maxIsolates > 1 the renderer emits several of these
+// (isolate-0..N-1 on ports 8080..8080+N-1), all referencing the same worker
+// module, so multiple isolates share one process/address space — the substrate
+// for isolate-to-isolate research. The k8s port name doubles as the socket name.
+type isolateInstance struct {
+	ServiceName string
+	Name        string
+	Port        int
+}
+
+// maxIsolatesLimit caps co-located isolates per pod. Each isolate consumes a
+// container port from 8080 up; the cap keeps the port range and the blast radius
+// of a single pod bounded.
+const maxIsolatesLimit = 8
+
+// isolateInstances builds the isolate list for n requested isolates. n <= 1
+// renders exactly the historical single-isolate shape (service "main", socket
+// "http", port 8080) so existing output is byte-identical; n > 1 renders
+// isolate-0..n-1. Isolate 0 always keeps the port name "http" so the TCP probes
+// and the default Service port keep working unchanged.
+func isolateInstances(n int) []isolateInstance {
+	if n <= 1 {
+		return []isolateInstance{{ServiceName: "main", Name: "http", Port: 8080}}
+	}
+	out := make([]isolateInstance, 0, n)
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("iso-%d", i)
+		if i == 0 {
+			name = "http"
+		}
+		out = append(out, isolateInstance{
+			ServiceName: fmt.Sprintf("isolate-%d", i),
+			Name:        name,
+			Port:        8080 + i,
+		})
+	}
+	return out
 }
 
 type labelPair struct {
@@ -194,6 +236,14 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 	exposureType := worker.Spec.Exposure.Type
 	if exposureType == "" {
 		exposureType = "ClusterIP"
+	}
+
+	maxIsolates := worker.Spec.Runtime.MaxIsolates
+	if maxIsolates < 0 {
+		return normalizedWorker{}, fmt.Errorf("spec.runtime.maxIsolates must be >= 0, got %d", maxIsolates)
+	}
+	if maxIsolates > maxIsolatesLimit {
+		return normalizedWorker{}, fmt.Errorf("spec.runtime.maxIsolates %d exceeds the limit of %d", maxIsolates, maxIsolatesLimit)
 	}
 
 	profile := worker.Spec.Hardening.Profile
@@ -254,6 +304,8 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 		ResultSinkURL:       worker.Spec.Instrumentation.ResultSink.Endpoint,
 		V8Inspector:         worker.Spec.Runtime.V8Inspector,
 		InspectorPort:       DefaultInspectorPort,
+		MaxIsolates:         maxIsolates,
+		Isolates:            isolateInstances(maxIsolates),
 	}
 	if normalized.CompatibilityDate == "" {
 		normalized.CompatibilityDate = "2024-09-23"
@@ -318,9 +370,6 @@ func rejectUnsupported(spec wulfv1alpha1.SandboxWorkerSpec) error {
 	if spec.Script.ConfigMapRef != nil {
 		return errors.New("spec.script.configMapRef is not implemented; use spec.script.inline")
 	}
-	if spec.Runtime.MaxIsolates != 0 {
-		return errors.New("spec.runtime.maxIsolates is not implemented")
-	}
 	if spec.Runtime.RequestTimeoutMs != 0 {
 		return errors.New("spec.runtime.requestTimeoutMs is not implemented")
 	}
@@ -375,6 +424,7 @@ func renderWorkerdConfig(worker normalizedWorker) (string, error) {
 		"CompatibilityFlags": quoteList(worker.CompatibilityFlags),
 		"Vars":               capnpVars(worker),
 		"Services":           worker.Services,
+		"Isolates":           worker.Isolates,
 	})
 }
 
@@ -465,7 +515,9 @@ const workerdConfigTemplate = `using Workerd = import "/workerd/workerd.capnp";
 
 const config :Workerd.Config = (
   services = [
-    (name = "main", worker = .mainWorker),
+{{- range .Isolates }}
+    (name = "{{ .ServiceName }}", worker = .mainWorker),
+{{- end }}
     (
       name = "internet",
       network = (
@@ -475,12 +527,15 @@ const config :Workerd.Config = (
   ],
 
   sockets = [
+{{- range $i, $iso := .Isolates }}
+{{- if $i }},{{ end }}
     (
-      name = "http",
-      address = "*:8080",
+      name = "{{ $iso.Name }}",
+      address = "*:{{ $iso.Port }}",
       http = (),
-      service = "main"
+      service = "{{ $iso.ServiceName }}"
     )
+{{- end }}
   ]
 );
 
@@ -559,8 +614,10 @@ spec:
 {{- end }}
 {{ .SecurityContext }}
           ports:
-            - name: http
-              containerPort: 8080
+{{- range .Isolates }}
+            - name: {{ .Name }}
+              containerPort: {{ .Port }}
+{{- end }}
 {{- if .V8Inspector }}
             - name: inspector
               containerPort: {{ .InspectorPort }}
@@ -615,9 +672,11 @@ spec:
   selector:
     app.kubernetes.io/name: {{ .Name }}
   ports:
-    - name: http
-      port: {{ .Port }}
-      targetPort: http
+{{- range $i, $iso := .Isolates }}
+    - name: {{ $iso.Name }}
+      port: {{ if $i }}{{ $iso.Port }}{{ else }}{{ $.Port }}{{ end }}
+      targetPort: {{ $iso.Name }}
+{{- end }}
 {{- if .V8Inspector }}
     - name: inspector
       port: {{ .InspectorPort }}

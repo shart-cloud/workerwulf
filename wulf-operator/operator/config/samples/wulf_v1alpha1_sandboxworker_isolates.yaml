@@ -1,0 +1,30 @@
+# Co-located isolates: maxIsolates > 1 runs several workerd isolates in ONE
+# process/pod (isolate-0..N-1 on ports 8080..8080+N-1), all sharing the same
+# worker module. This is the substrate for isolate-to-isolate research — e.g.
+# whether one isolate can affect a co-located neighbour under resource pressure.
+apiVersion: wulf.jaredgore.com/v1alpha1
+kind: SandboxWorker
+metadata:
+  name: workerd-rt-001-isolates
+  namespace: wulf-system
+  labels:
+    wulf.jaredgore.com/track: isolate-boundary
+    wulf.jaredgore.com/probe-id: P-WL-ISO-001
+spec:
+  script:
+    inline: |
+      export default {
+        fetch(request) {
+          return Response.json({ ok: true, platform: "wulf-operator", port: new URL(request.url).port });
+        },
+      };
+  compatibilityDate: "2024-09-23"
+  compatibilityFlags:
+    - nodejs_compat
+  hardening:
+    profile: naked
+  runtime:
+    maxIsolates: 2
+  exposure:
+    type: ClusterIP
+    port: 8080

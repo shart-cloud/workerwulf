@@ -148,6 +148,25 @@ owner-referenced for GC, and fails closed with `RenderFailed` on an unsupported
 value. See `deploy/profiles/bpf-lsm.yaml` and
 `config/samples/wulf_v1alpha1_sandboxworker_bpf_lsm.yaml`.
 
+## Co-located isolates (maxIsolates)
+
+`spec.runtime.maxIsolates` (default/0/1 → one isolate; up to 8) renders N workerd
+isolates inside a **single process and pod**: services `isolate-0..N-1`, all
+referencing the same worker module, each bound to its own socket on ports
+`8080..8080+N-1`. The Deployment exposes one container port per isolate and the
+Service exposes each (the primary isolate keeps `spec.exposure.port`; the rest are
+on their container port), so every co-located isolate is independently
+addressable. The single-isolate output is byte-identical to before (service
+`main`, socket/port `http`:8080), and the TCP probes still target the primary
+isolate.
+
+This is the substrate for isolate-to-isolate research: because the isolates share
+one process (one address space, one container memory cgroup), it lets us measure
+what the V8 isolate boundary does and does not isolate — e.g. whether one
+isolate's resource pressure affects a co-located neighbour, versus separating the
+same workers into distinct pods. See
+`config/samples/wulf_v1alpha1_sandboxworker_isolates.yaml`.
+
 ## Next controller step
 
 When `kubebuilder` or `controller-gen` is available, this module can be promoted

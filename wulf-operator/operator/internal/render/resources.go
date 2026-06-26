@@ -91,9 +91,7 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 								"-I",
 								"/usr/local/lib/node_modules/workerd",
 							},
-							Ports: []corev1.ContainerPort{
-								{Name: "http", ContainerPort: 8080},
-							},
+							Ports: containerPortsFor(normalized),
 							// TCP probes, not HTTP: GET / on this worker IS the research probe
 							// (it returns the ProbeResult and generates the traced syscalls).
 							// An httpGet health check would pollute every observation, so we
@@ -144,9 +142,10 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 	}
 
 	if normalized.V8Inspector {
+		// The inspector container/service ports are added by containerPortsFor /
+		// servicePortsFor; here we only need the workerd arg that binds it.
 		container := &deployment.Spec.Template.Spec.Containers[0]
 		container.Args = append(container.Args, fmt.Sprintf("--inspector-addr=0.0.0.0:%d", normalized.InspectorPort))
-		container.Ports = append(container.Ports, corev1.ContainerPort{Name: "inspector", ContainerPort: int32(normalized.InspectorPort)})
 	}
 
 	var service *corev1.Service
@@ -161,17 +160,8 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 			Spec: corev1.ServiceSpec{
 				Type:     corev1.ServiceType(normalized.ExposureType),
 				Selector: map[string]string{"app.kubernetes.io/name": normalized.Name},
-				Ports: []corev1.ServicePort{
-					{Name: "http", Port: int32(normalized.Port), TargetPort: intstr.FromString("http")},
-				},
+				Ports:    servicePortsFor(normalized),
 			},
-		}
-		if normalized.V8Inspector {
-			service.Spec.Ports = append(service.Spec.Ports, corev1.ServicePort{
-				Name:       "inspector",
-				Port:       int32(normalized.InspectorPort),
-				TargetPort: intstr.FromString("inspector"),
-			})
 		}
 	}
 
@@ -249,6 +239,47 @@ func tracingPolicyResource(worker normalizedWorker) *unstructured.Unstructured {
 			},
 		},
 	}}
+}
+
+// containerPortsFor exposes one container port per co-located isolate (plus the
+// inspector port when enabled). With maxIsolates <= 1 this is the single "http"
+// port on 8080, unchanged.
+func containerPortsFor(worker normalizedWorker) []corev1.ContainerPort {
+	ports := make([]corev1.ContainerPort, 0, len(worker.Isolates)+1)
+	for _, iso := range worker.Isolates {
+		ports = append(ports, corev1.ContainerPort{Name: iso.Name, ContainerPort: int32(iso.Port)})
+	}
+	if worker.V8Inspector {
+		ports = append(ports, corev1.ContainerPort{Name: "inspector", ContainerPort: int32(worker.InspectorPort)})
+	}
+	return ports
+}
+
+// servicePortsFor exposes each isolate through the Service so every co-located
+// isolate is independently addressable. The primary isolate (index 0) keeps the
+// configured exposure port (spec.exposure.port, default 8080); additional
+// isolates are exposed on their container port (8081, 8082, ...).
+func servicePortsFor(worker normalizedWorker) []corev1.ServicePort {
+	ports := make([]corev1.ServicePort, 0, len(worker.Isolates)+1)
+	for i, iso := range worker.Isolates {
+		port := iso.Port
+		if i == 0 {
+			port = worker.Port
+		}
+		ports = append(ports, corev1.ServicePort{
+			Name:       iso.Name,
+			Port:       int32(port),
+			TargetPort: intstr.FromString(iso.Name),
+		})
+	}
+	if worker.V8Inspector {
+		ports = append(ports, corev1.ServicePort{
+			Name:       "inspector",
+			Port:       int32(worker.InspectorPort),
+			TargetPort: intstr.FromString("inspector"),
+		})
+	}
+	return ports
 }
 
 // workerdBinaryValues is the set of known workerd binary paths used to scope
