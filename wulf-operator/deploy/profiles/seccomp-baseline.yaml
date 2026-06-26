@@ -1,0 +1,15 @@
+apiVersion: wulf.jaredgore.com/v1alpha1
+kind: HardeningProfile
+metadata:
+  name: seccomp-baseline
+  namespace: wulf-system
+spec:
+  description: "RuntimeDefault seccomp, non-root workerd, no privilege escalation, all Linux capabilities dropped"
+  seccomp:
+    type: RuntimeDefault
+  capabilitiesDrop:
+    - ALL
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
