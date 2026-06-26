@@ -273,15 +273,27 @@ func EnforcementPolicyName(worker wulfv1alpha1.SandboxWorker) string {
 }
 
 // enforcementPolicyResource builds the per-worker enforcing
-// TracingPolicyNamespaced. It hooks the kernel LSM security_* functions (not
-// syscall entry) for the workerd binary and attaches an Override action that
-// returns -EPERM, so a denied network/file/exec/ptrace attempt fails in-place
-// while the worker keeps running — which lets a probe observe and report the
-// denial. Like tracingPolicyResource it is the single source of truth for both
-// the typed controller path and the string preview path, and is pod-selector +
-// matchBinaries scoped to this worker only. Unlike the tracing policy the LSM
-// hook names are architecture-independent (no __x64_ prefix); whether the
-// kernel permits Override on these hooks must be verified on the target cluster.
+// TracingPolicyNamespaced. It uses Tetragon BPF-LSM hooks (spec.lsmhooks, not
+// kprobes on the security_* functions) for the workerd binary and attaches an
+// Override action that returns -EPERM, so a denied operation fails in-place while
+// the worker keeps running — which lets a probe observe and report the denial.
+// BPF-LSM hooks return access decisions natively, so Override does not depend on
+// the kernel's error-injection allowlist the way a kprobe on a security_*
+// function would; this was verified to enforce (and the worker to survive) on a
+// Talos v1.7.0 Tetragon cluster with BPF-LSM enabled. The hook names carry no
+// __x64_ prefix, so they are architecture-independent.
+//
+// The hook set is deliberately limited to operations workerd should never
+// legitimately perform: socket_connect (all egress, including DNS),
+// bprm_check_security (exec), and ptrace_access_check. file_open is intentionally
+// NOT enforced here: matchBinaries scopes to workerd itself, so a blanket
+// file_open Override would deny workerd's own config/script/library opens and
+// break the worker. Meaningful file enforcement needs path-scoped matchArgs and
+// is a separate follow-up.
+//
+// Like tracingPolicyResource this is the single source of truth for both the
+// typed controller path and the string preview path, and is pod-selector +
+// matchBinaries scoped to this worker only.
 func enforcementPolicyResource(worker normalizedWorker) *unstructured.Unstructured {
 	binaries := workerdBinaryValues()
 	arg := func(index int64, argType string) interface{} {
@@ -289,11 +301,10 @@ func enforcementPolicyResource(worker normalizedWorker) *unstructured.Unstructur
 	}
 	// Each LSM hook matches only the workerd binary and overrides the return
 	// value with -1 (-EPERM), denying the operation at the LSM boundary.
-	lsmKprobe := func(call string, args ...interface{}) interface{} {
+	lsmHook := func(hook string, args ...interface{}) interface{} {
 		return map[string]interface{}{
-			"call":    call,
-			"syscall": false,
-			"args":    args,
+			"hook": hook,
+			"args": args,
 			"selectors": []interface{}{
 				map[string]interface{}{
 					"matchBinaries": []interface{}{
@@ -324,11 +335,10 @@ func enforcementPolicyResource(worker normalizedWorker) *unstructured.Unstructur
 			"podSelector": map[string]interface{}{
 				"matchLabels": map[string]interface{}{"app.kubernetes.io/name": worker.Name},
 			},
-			"kprobes": []interface{}{
-				lsmKprobe("security_socket_connect", arg(1, "sockaddr")),
-				lsmKprobe("security_file_open", arg(0, "file")),
-				lsmKprobe("security_bprm_check", arg(0, "linux_binprm")),
-				lsmKprobe("security_ptrace_access_check", arg(1, "int")),
+			"lsmhooks": []interface{}{
+				lsmHook("socket_connect", arg(1, "sockaddr")),
+				lsmHook("bprm_check_security", arg(0, "linux_binprm")),
+				lsmHook("ptrace_access_check", arg(1, "int")),
 			},
 		},
 	}}

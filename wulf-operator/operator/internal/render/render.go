@@ -26,14 +26,15 @@ const TetragonPolicyWorkerdSyscalls = "workerd-syscalls"
 
 // TetragonEnforceBpfLsmDeny is the only supported HardeningProfile
 // tetragonEnforceRef. Unlike tetragonPolicyRef (which only observes), it renders
-// a per-worker enforcing TracingPolicyNamespaced that hooks the kernel LSM
-// security_* functions and returns -EPERM (action: Override) for the workerd
-// binary's network/file/exec/ptrace operations. Hooking the LSM layer rather
-// than syscall entry makes the deny harder to bypass and is architecture-
-// independent (no __x64_ prefix). Like the other refs, any other value fails
-// closed. NOTE: action: Override depends on the kernel exposing these hooks for
-// BPF error injection and on Tetragon running with enforcement enabled — the
-// render is always correct, but whether it blocks must be verified on-cluster.
+// a per-worker enforcing TracingPolicyNamespaced that uses Tetragon BPF-LSM
+// hooks (spec.lsmhooks) and returns -EPERM (action: Override) for the workerd
+// binary's egress/exec/ptrace operations. Using BPF-LSM rather than a kprobe on
+// the security_* functions makes Override reliable (LSM hooks return access
+// decisions natively, so no error-injection allowlist is required) and is
+// architecture-independent. Verified to enforce, with the worker surviving the
+// deny, on a Talos v1.7.0 Tetragon cluster with BPF-LSM enabled. Like the other
+// refs, any other value fails closed. The cluster must run Tetragon with BPF-LSM
+// available; where it is not, the policy applies but does not block.
 const TetragonEnforceBpfLsmDeny = "bpf-lsm-deny"
 
 // DefaultInspectorPort is the V8 inspector (Chrome DevTools Protocol) port

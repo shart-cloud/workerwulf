@@ -26,9 +26,11 @@ func TestRenderEnforcementPolicyWhenProfileSetsRef(t *testing.T) {
 		"kind: TracingPolicyNamespaced",
 		"apiVersion: cilium.io/v1alpha1",
 		"name: " + worker.Name + "-enforce",
-		// LSM hooks, not syscall entry — and the deny action.
-		"security_socket_connect",
-		"security_ptrace_access_check",
+		// BPF-LSM hooks (verified on-cluster), not syscall-entry kprobes.
+		"lsmhooks",
+		"socket_connect",
+		"bprm_check_security",
+		"ptrace_access_check",
 		"action: Override",
 		"/usr/local/lib/node_modules/workerd/bin/workerd",
 		"app.kubernetes.io/name: " + worker.Name,
@@ -38,10 +40,19 @@ func TestRenderEnforcementPolicyWhenProfileSetsRef(t *testing.T) {
 		}
 	}
 
-	// An enforcement policy hooks the LSM layer, so it must not carry the
-	// architecture-specific syscall-entry kprobes the tracing policy uses.
-	if strings.Contains(stream, "__x64_sys_") {
-		t.Fatalf("enforcement policy should not use __x64_sys_* syscall kprobes\n%s", stream)
+	for _, unwanted := range []string{
+		// Enforcement uses BPF-LSM hooks, not syscall-entry kprobes...
+		"__x64_sys_",
+		// ...and not the fragile kprobe-on-security_* path that depends on the
+		// kernel error-injection allowlist.
+		"security_socket_connect",
+		// file_open is intentionally not enforced (a blanket deny scoped to the
+		// workerd binary would break workerd's own file access).
+		"file_open",
+	} {
+		if strings.Contains(stream, unwanted) {
+			t.Fatalf("enforcement policy should not contain %q\n%s", unwanted, stream)
+		}
 	}
 }
 

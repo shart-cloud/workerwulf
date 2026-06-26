@@ -4,7 +4,7 @@ metadata:
   name: bpf-lsm
   namespace: wulf-system
 spec:
-  description: "seccomp-baseline hardening plus an operator-managed enforcing Tetragon TracingPolicyNamespaced that hooks the kernel LSM security_* functions for the workerd binary and returns -EPERM (action: Override) on network/file/exec/ptrace, scoped to the worker's pods. Enforcement requires Tetragon running with enforcement enabled; verify on the target cluster."
+  description: "seccomp-baseline hardening plus an operator-managed enforcing Tetragon TracingPolicyNamespaced that uses BPF-LSM hooks (socket_connect/bprm_check_security/ptrace_access_check) for the workerd binary and returns -EPERM (action: Override), scoped to the worker's pods. Denies egress/exec/ptrace while the worker keeps running. Requires a cluster running Tetragon with BPF-LSM available; where it is not, the policy applies but does not block."
   seccomp:
     type: RuntimeDefault
   capabilitiesDrop:
