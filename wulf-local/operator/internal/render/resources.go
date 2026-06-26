@@ -61,6 +61,10 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: copyLabels(labels)},
 				Spec: corev1.PodSpec{
+					// A sandboxed worker has no business talking to the API server.
+					// If a worker escapes the V8 isolate, denying the mounted
+					// ServiceAccount token removes the most obvious pivot off the pod.
+					AutomountServiceAccountToken: boolPtr(false),
 					Containers: []corev1.Container{
 						{
 							Name:            "workerd",
@@ -75,6 +79,12 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 							Ports: []corev1.ContainerPort{
 								{Name: "http", ContainerPort: 8080},
 							},
+							// TCP probes, not HTTP: GET / on this worker IS the research probe
+							// (it returns the ProbeResult and generates the traced syscalls).
+							// An httpGet health check would pollute every observation, so we
+							// only check that the socket is accepting connections.
+							ReadinessProbe: tcpProbe(2, 5),
+							LivenessProbe:  tcpProbe(10, 20),
 							Resources: corev1.ResourceRequirements{
 								Requests: corev1.ResourceList{
 									corev1.ResourceCPU:    resource.MustParse(normalized.CPURequest),
@@ -88,6 +98,10 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 							SecurityContext: securityContextResourceFor(normalized.HardeningProfile, normalized.HardeningSpec),
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "workerd-config", MountPath: "/etc/workerd", ReadOnly: true},
+								// Writable scratch so a profile can set
+								// readOnlyRootFilesystem without breaking workerd's
+								// temp-file use.
+								{Name: "tmp", MountPath: "/tmp"},
 							},
 						},
 					},
@@ -104,10 +118,20 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 								},
 							},
 						},
+						{
+							Name:         "tmp",
+							VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+						},
 					},
 				},
 			},
 		},
+	}
+
+	if normalized.V8Inspector {
+		container := &deployment.Spec.Template.Spec.Containers[0]
+		container.Args = append(container.Args, fmt.Sprintf("--inspector-addr=0.0.0.0:%d", normalized.InspectorPort))
+		container.Ports = append(container.Ports, corev1.ContainerPort{Name: "inspector", ContainerPort: int32(normalized.InspectorPort)})
 	}
 
 	var service *corev1.Service
@@ -126,6 +150,13 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 					{Name: "http", Port: int32(normalized.Port), TargetPort: intstr.FromString("http")},
 				},
 			},
+		}
+		if normalized.V8Inspector {
+			service.Spec.Ports = append(service.Spec.Ports, corev1.ServicePort{
+				Name:       "inspector",
+				Port:       int32(normalized.InspectorPort),
+				TargetPort: intstr.FromString("inspector"),
+			})
 		}
 	}
 
@@ -152,6 +183,16 @@ func boolPtr(value bool) *bool {
 
 func int64Ptr(value int64) *int64 {
 	return &value
+}
+
+func tcpProbe(initialDelaySeconds, periodSeconds int32) *corev1.Probe {
+	return &corev1.Probe{
+		ProbeHandler: corev1.ProbeHandler{
+			TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString("http")},
+		},
+		InitialDelaySeconds: initialDelaySeconds,
+		PeriodSeconds:       periodSeconds,
+	}
 }
 
 func NetworkPolicyName(worker wulfv1alpha1.SandboxWorker) string {
@@ -186,13 +227,20 @@ func hardeningProfileSpecFor(profile string, resolved *wulfv1alpha1.HardeningPro
 	if resolved != nil {
 		return resolved.DeepCopy()
 	}
+	// In-cluster, profiles are always CR-driven (the controller resolves the
+	// HardeningProfile and passes its spec). This built-in fallback exists only
+	// for the wulf-local-render CLI preview and MUST mirror a profile actually
+	// shipped under deploy/profiles/. Do not add aspirational names here:
+	// "bpf-lsm"/"full-lockdown" have no enforcement yet, and a name that renders
+	// hardening it doesn't deliver is worse than a missing profile.
 	switch profile {
-	case "seccomp-baseline", "seccomp-strict", "bpf-lsm", "full-lockdown":
+	case "seccomp-baseline":
 		allowPrivilegeEscalation := false
 		return &wulfv1alpha1.HardeningProfileSpec{
 			Seccomp:                  wulfv1alpha1.SeccompSpec{Type: string(corev1.SeccompProfileTypeRuntimeDefault)},
 			AllowPrivilegeEscalation: &allowPrivilegeEscalation,
 			CapabilitiesDrop:         []corev1.Capability{corev1.Capability("ALL")},
+			ReadOnlyRootFilesystem:   true,
 			RunAsNonRoot:             true,
 			RunAsUser:                65532,
 		}

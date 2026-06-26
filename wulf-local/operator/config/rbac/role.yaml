@@ -1,8 +1,7 @@
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
   name: wulf-local-operator
-  namespace: wulf-system
 rules:
   - apiGroups:
       - wulf.jaredgore.com

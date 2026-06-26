@@ -162,7 +162,10 @@ kubectl apply -f wulf-local/operator/config/samples/wulf_v1alpha1_sandboxworker_
 For the egress-deny profile, apply the profile object and set
 `spec.hardening.profile: deny-all-egress` on a `SandboxWorker`. The operator
 renders a per-worker `NetworkPolicy` named `<worker>-network-policy` that
-selects only that worker pod and denies all egress:
+selects only that worker pod and denies all egress. This is a total deny: DNS
+resolution and any `instrumentation.resultSink` endpoint are blocked too, so the
+worker cannot reach anything off-pod. NetworkPolicy enforcement also requires a
+CNI that honors it (e.g. Cilium/Calico).
 
 ```bash
 kubectl apply -f wulf-local/deploy/profiles/deny-all-egress.yaml
@@ -176,3 +179,23 @@ The reconciler resolves `spec.hardening.profile` in the `SandboxWorker`
 namespace. A missing profile leaves the worker in `Failed` status with a
 `HardeningProfileNotFound` condition and no create/update pass for the worker
 deployment.
+
+## V8 inspector
+
+Set `spec.runtime.v8Inspector: true` to have workerd start the Chrome DevTools
+Protocol inspector. The operator adds `--inspector-addr=0.0.0.0:9229` to the
+workerd args, exposes a named `inspector` container port, and (when the worker
+has a Service) adds an `inspector` Service port:
+
+```bash
+kubectl -n wulf-system patch sandboxworker workerd-rt-001 \
+  --type merge \
+  -p '{"spec":{"runtime":{"v8Inspector":true}}}'
+
+kubectl -n wulf-system port-forward svc/workerd-rt-001 9229:9229
+# then open chrome://inspect (or ws://127.0.0.1:9229) and attach
+```
+
+The inspector is inbound-only, so it works alongside `deny-all-egress`. Treat it
+as a debugging aid: it gives full isolate introspection, so do not enable it on
+a worker you would not also hand a debugger.

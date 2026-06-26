@@ -1,6 +1,7 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -241,6 +242,183 @@ func TestRenderSandboxWorkerRejectsNonInlineScriptForNow(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "only spec.script.inline") {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestRenderSandboxWorkerResourcesDeniesServiceAccountToken(t *testing.T) {
+	resources, err := RenderSandboxWorkerResources(sampleWorker(), Options{})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+	got := resources.Deployment.Spec.Template.Spec.AutomountServiceAccountToken
+	if got == nil || *got {
+		t.Fatalf("automountServiceAccountToken = %v, want false", got)
+	}
+}
+
+func TestRenderSandboxWorkerResourcesTCPProbes(t *testing.T) {
+	resources, err := RenderSandboxWorkerResources(sampleWorker(), Options{})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+	container := resources.Deployment.Spec.Template.Spec.Containers[0]
+	for name, probe := range map[string]*corev1.Probe{"readiness": container.ReadinessProbe, "liveness": container.LivenessProbe} {
+		if probe == nil {
+			t.Fatalf("%s probe = nil, want tcpSocket probe", name)
+		}
+		if probe.TCPSocket == nil {
+			t.Fatalf("%s probe is not tcpSocket (httpGet would pollute probe results): %#v", name, probe.ProbeHandler)
+		}
+		if probe.HTTPGet != nil {
+			t.Fatalf("%s probe uses httpGet; must be tcpSocket so it does not invoke the worker's fetch handler", name)
+		}
+	}
+}
+
+func TestRenderSandboxWorkerResourcesRejectsUnimplementedSpec(t *testing.T) {
+	cases := map[string]func(*wulfv1alpha1.SandboxWorker){
+		"maxIsolates":      func(w *wulfv1alpha1.SandboxWorker) { w.Spec.Runtime.MaxIsolates = 4 },
+		"requestTimeoutMs": func(w *wulfv1alpha1.SandboxWorker) { w.Spec.Runtime.RequestTimeoutMs = 1000 },
+		"coLocateWith":     func(w *wulfv1alpha1.SandboxWorker) { w.Spec.Runtime.CoLocateWith = "other" },
+		"tracingPolicy":    func(w *wulfv1alpha1.SandboxWorker) { w.Spec.Instrumentation.TracingPolicy = "syscalls" },
+		"git": func(w *wulfv1alpha1.SandboxWorker) {
+			w.Spec.Script.Git = &wulfv1alpha1.GitScriptRef{Repo: "r", Path: "p"}
+		},
+	}
+	for name, mutate := range cases {
+		worker := sampleWorker()
+		mutate(&worker)
+		if _, err := RenderSandboxWorkerResources(worker, Options{}); err == nil {
+			t.Fatalf("%s: expected error for unimplemented field, got nil", name)
+		}
+	}
+}
+
+func TestRenderSandboxWorkerResourcesV8Inspector(t *testing.T) {
+	worker := sampleWorker()
+	worker.Spec.Runtime.V8Inspector = true
+
+	resources, err := RenderSandboxWorkerResources(worker, Options{})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+
+	container := resources.Deployment.Spec.Template.Spec.Containers[0]
+	wantArg := fmt.Sprintf("--inspector-addr=0.0.0.0:%d", DefaultInspectorPort)
+	if !containsString(container.Args, wantArg) {
+		t.Fatalf("container args = %v, want to contain %q", container.Args, wantArg)
+	}
+	if !hasPortNamed(container.Ports, "inspector") {
+		t.Fatalf("container ports = %#v, want an 'inspector' port", container.Ports)
+	}
+	if resources.Service == nil || !hasServicePortNamed(resources.Service.Spec.Ports, "inspector") {
+		t.Fatalf("service ports = %#v, want an 'inspector' port", resources.Service)
+	}
+}
+
+func TestRenderSandboxWorkerResourcesNoInspectorByDefault(t *testing.T) {
+	resources, err := RenderSandboxWorkerResources(sampleWorker(), Options{})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+	container := resources.Deployment.Spec.Template.Spec.Containers[0]
+	if hasPortNamed(container.Ports, "inspector") {
+		t.Fatal("inspector port present without spec.runtime.v8Inspector")
+	}
+	for _, arg := range container.Args {
+		if strings.HasPrefix(arg, "--inspector-addr") {
+			t.Fatalf("inspector arg %q present without spec.runtime.v8Inspector", arg)
+		}
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPortNamed(ports []corev1.ContainerPort, name string) bool {
+	for _, p := range ports {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasServicePortNamed(ports []corev1.ServicePort, name string) bool {
+	for _, p := range ports {
+		if p.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func TestRenderSandboxWorkerResultSinkEndpointBinding(t *testing.T) {
+	worker := sampleWorker()
+	worker.Spec.Instrumentation.ResultSink = wulfv1alpha1.ResultSink{Type: "http", Endpoint: "http://sink.wulf-system.svc/ingest"}
+
+	objects, err := RenderSandboxWorker(worker, Options{})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorker() error = %v", err)
+	}
+	if !strings.Contains(YAMLStream(objects), `name = "RESULT_SINK_URL", text = "http://sink.wulf-system.svc/ingest"`) {
+		t.Fatalf("RESULT_SINK_URL not wired from resultSink.endpoint\n%s", YAMLStream(objects))
+	}
+}
+
+func TestRenderSandboxWorkerPhantomProfileGivesNoFakeHardening(t *testing.T) {
+	worker := sampleWorker()
+	worker.Spec.Hardening.Profile = "bpf-lsm"
+
+	resources, err := RenderSandboxWorkerResources(worker, Options{})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+	if sc := resources.Deployment.Spec.Template.Spec.Containers[0].SecurityContext; sc != nil {
+		t.Fatalf("phantom profile %q fabricated a securityContext = %#v; unimplemented profiles must not render fake hardening", worker.Spec.Hardening.Profile, sc)
+	}
+}
+
+func TestRenderSandboxWorkerResourcesWritableTmpForReadOnlyRoot(t *testing.T) {
+	worker := sampleWorker()
+	profile := wulfv1alpha1.HardeningProfileSpec{
+		Seccomp:                wulfv1alpha1.SeccompSpec{Type: "RuntimeDefault"},
+		ReadOnlyRootFilesystem: true,
+	}
+
+	resources, err := RenderSandboxWorkerResources(worker, Options{HardeningProfile: &profile})
+	if err != nil {
+		t.Fatalf("RenderSandboxWorkerResources() error = %v", err)
+	}
+	pod := resources.Deployment.Spec.Template.Spec
+
+	var tmpVol *corev1.Volume
+	for i := range pod.Volumes {
+		if pod.Volumes[i].Name == "tmp" {
+			tmpVol = &pod.Volumes[i]
+		}
+	}
+	if tmpVol == nil || tmpVol.EmptyDir == nil {
+		t.Fatalf("expected an emptyDir 'tmp' volume so readOnlyRootFilesystem leaves writable scratch; volumes = %#v", pod.Volumes)
+	}
+
+	var mounted bool
+	for _, m := range pod.Containers[0].VolumeMounts {
+		if m.Name == "tmp" && m.MountPath == "/tmp" && !m.ReadOnly {
+			mounted = true
+		}
+	}
+	if !mounted {
+		t.Fatalf("expected writable /tmp mount; mounts = %#v", pod.Containers[0].VolumeMounts)
+	}
+	if ro := pod.Containers[0].SecurityContext.ReadOnlyRootFilesystem; ro == nil || !*ro {
+		t.Fatalf("readOnlyRootFilesystem = %v, want true", ro)
 	}
 }
 

@@ -15,6 +15,10 @@ import (
 const DefaultImage = "ghcr.io/jlgore/wulf-local-workerd:0.1.0"
 const NetworkPolicyDenyAllEgress = "deny-all-egress"
 
+// DefaultInspectorPort is the V8 inspector (Chrome DevTools Protocol) port
+// workerd binds when spec.runtime.v8Inspector is set.
+const DefaultInspectorPort = 9229
+
 type Options struct {
 	Image            string
 	HardeningProfile *wulfv1alpha1.HardeningProfileSpec
@@ -100,6 +104,9 @@ type normalizedWorker struct {
 	SecurityContext    string
 	NetworkPolicyRef   string
 	NetworkPolicyName  string
+	ResultSinkURL      string
+	V8Inspector        bool
+	InspectorPort      int
 }
 
 type labelPair struct {
@@ -123,6 +130,9 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 	}
 	if worker.Spec.Script.Inline == "" {
 		return normalizedWorker{}, errors.New("only spec.script.inline is supported in the current renderer")
+	}
+	if err := rejectUnsupported(worker.Spec); err != nil {
+		return normalizedWorker{}, err
 	}
 
 	namespace := worker.Namespace
@@ -187,6 +197,9 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 		SecurityContext:    securityContextFor(profile, hardeningSpec),
 		NetworkPolicyRef:   networkPolicyRef,
 		NetworkPolicyName:  NetworkPolicyName(worker),
+		ResultSinkURL:      worker.Spec.Instrumentation.ResultSink.Endpoint,
+		V8Inspector:        worker.Spec.Runtime.V8Inspector,
+		InspectorPort:      DefaultInspectorPort,
 	}
 	if normalized.CompatibilityDate == "" {
 		normalized.CompatibilityDate = "2024-09-23"
@@ -239,6 +252,33 @@ func defaultString(value, fallback string) string {
 	return value
 }
 
+// rejectUnsupported fails loudly on spec fields the CRD advertises but the
+// renderer does not yet honor. Silently dropping them lets an operator believe
+// they applied an isolate cap or a request timeout that never took effect —
+// worse than a hard error. Wire a field here (and delete its check) the moment
+// the renderer actually implements it.
+func rejectUnsupported(spec wulfv1alpha1.SandboxWorkerSpec) error {
+	if spec.Script.Git != nil {
+		return errors.New("spec.script.git is not implemented; use spec.script.inline")
+	}
+	if spec.Script.ConfigMapRef != nil {
+		return errors.New("spec.script.configMapRef is not implemented; use spec.script.inline")
+	}
+	if spec.Runtime.MaxIsolates != 0 {
+		return errors.New("spec.runtime.maxIsolates is not implemented")
+	}
+	if spec.Runtime.RequestTimeoutMs != 0 {
+		return errors.New("spec.runtime.requestTimeoutMs is not implemented")
+	}
+	if spec.Runtime.CoLocateWith != "" {
+		return errors.New("spec.runtime.coLocateWith is not implemented")
+	}
+	if spec.Instrumentation.TracingPolicy != "" {
+		return errors.New("spec.instrumentation.tracingPolicy is not applied by the operator; apply the Tetragon TracingPolicy out of band")
+	}
+	return nil
+}
+
 func networkPolicyRefFor(spec *wulfv1alpha1.HardeningProfileSpec) (string, error) {
 	if spec == nil || spec.NetworkPolicyRef == "" {
 		return "", nil
@@ -273,7 +313,7 @@ func capnpVars(worker normalizedWorker) []bindingVar {
 
 	add("WORKER_NAME", bindingValue(worker.Vars, "WORKER_NAME", worker.Name))
 	add("HARDENING_PROFILE", bindingValue(worker.Vars, "HARDENING_PROFILE", worker.HardeningProfile))
-	add("RESULT_SINK_URL", bindingValue(worker.Vars, "RESULT_SINK_URL", ""))
+	add("RESULT_SINK_URL", bindingValue(worker.Vars, "RESULT_SINK_URL", worker.ResultSinkURL))
 	for _, variable := range worker.Vars {
 		add(variable.Name, variable.Value)
 	}
@@ -426,6 +466,7 @@ spec:
         {{ .Key }}: {{ .Value }}
 {{- end }}
     spec:
+      automountServiceAccountToken: false
       containers:
         - name: workerd
           image: {{ .Image }}
@@ -435,10 +476,27 @@ spec:
             - /etc/workerd/config/workerd.capnp
             - -I
             - /usr/local/lib/node_modules/workerd
+{{- if .V8Inspector }}
+            - --inspector-addr=0.0.0.0:{{ .InspectorPort }}
+{{- end }}
 {{ .SecurityContext }}
           ports:
             - name: http
               containerPort: 8080
+{{- if .V8Inspector }}
+            - name: inspector
+              containerPort: {{ .InspectorPort }}
+{{- end }}
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
           resources:
             requests:
               cpu: {{ .CPURequest }}
@@ -450,6 +508,8 @@ spec:
             - name: workerd-config
               mountPath: /etc/workerd
               readOnly: true
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: workerd-config
           configMap:
@@ -459,6 +519,8 @@ spec:
                 path: config/workerd.capnp
               - key: worker.js
                 path: script/worker.js
+        - name: tmp
+          emptyDir: {}
 `
 
 const serviceTemplate = `apiVersion: v1
@@ -478,6 +540,11 @@ spec:
     - name: http
       port: {{ .Port }}
       targetPort: http
+{{- if .V8Inspector }}
+    - name: inspector
+      port: {{ .InspectorPort }}
+      targetPort: inspector
+{{- end }}
 `
 
 const networkPolicyTemplate = `apiVersion: networking.k8s.io/v1

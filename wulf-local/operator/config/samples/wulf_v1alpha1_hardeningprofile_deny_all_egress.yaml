@@ -4,13 +4,13 @@ metadata:
   name: deny-all-egress
   namespace: wulf-system
 spec:
-  description: "RuntimeDefault seccomp plus an operator-managed NetworkPolicy that denies all egress"
+  description: "RuntimeDefault seccomp plus an operator-managed NetworkPolicy that denies all egress (including DNS and the result sink; the worker cannot resolve or reach anything off-pod)"
   seccomp:
     type: RuntimeDefault
   capabilitiesDrop:
     - ALL
   allowPrivilegeEscalation: false
-  readOnlyRootFilesystem: false
+  readOnlyRootFilesystem: true
   runAsNonRoot: true
   runAsUser: 65532
   networkPolicyRef: deny-all-egress
