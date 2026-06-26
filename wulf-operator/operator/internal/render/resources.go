@@ -28,11 +28,12 @@ var TracingPolicyGVK = schema.GroupVersionKind{
 }
 
 type Resources struct {
-	ConfigMap     *corev1.ConfigMap
-	Deployment    *appsv1.Deployment
-	Service       *corev1.Service
-	NetworkPolicy *networkingv1.NetworkPolicy
-	TracingPolicy *unstructured.Unstructured
+	ConfigMap         *corev1.ConfigMap
+	Deployment        *appsv1.Deployment
+	Service           *corev1.Service
+	NetworkPolicy     *networkingv1.NetworkPolicy
+	TracingPolicy     *unstructured.Unstructured
+	EnforcementPolicy *unstructured.Unstructured
 }
 
 func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Options) (Resources, error) {
@@ -181,7 +182,12 @@ func RenderSandboxWorkerResources(worker wulfv1alpha1.SandboxWorker, opts Option
 		tracingPolicy = tracingPolicyResource(normalized)
 	}
 
-	return Resources{ConfigMap: configMap, Deployment: deployment, Service: service, NetworkPolicy: networkPolicy, TracingPolicy: tracingPolicy}, nil
+	var enforcementPolicy *unstructured.Unstructured
+	if normalized.TetragonEnforceRef != "" {
+		enforcementPolicy = enforcementPolicyResource(normalized)
+	}
+
+	return Resources{ConfigMap: configMap, Deployment: deployment, Service: service, NetworkPolicy: networkPolicy, TracingPolicy: tracingPolicy, EnforcementPolicy: enforcementPolicy}, nil
 }
 
 // TetragonPolicyName is the deterministic name of the per-worker
@@ -199,12 +205,7 @@ func TetragonPolicyName(worker wulfv1alpha1.SandboxWorker) string {
 // any other worker. The __x64_sys_* kprobes are x86_64-specific; on other
 // architectures the call names must change.
 func tracingPolicyResource(worker normalizedWorker) *unstructured.Unstructured {
-	binaries := []interface{}{
-		"/usr/local/bin/workerd",
-		"/usr/local/lib/node_modules/workerd/bin/workerd",
-		"/usr/local/lib/node_modules/workerd/node_modules/@cloudflare/workerd-linux-64/bin/workerd",
-		"/usr/bin/workerd",
-	}
+	binaries := workerdBinaryValues()
 	arg := func(index int64, argType string) interface{} {
 		return map[string]interface{}{"index": index, "type": argType}
 	}
@@ -245,6 +246,89 @@ func tracingPolicyResource(worker normalizedWorker) *unstructured.Unstructured {
 				kprobe("__x64_sys_connect", arg(1, "sockaddr")),
 				kprobe("__x64_sys_execve", arg(0, "string")),
 				kprobe("__x64_sys_mmap", arg(2, "int"), arg(3, "int")),
+			},
+		},
+	}}
+}
+
+// workerdBinaryValues is the set of known workerd binary paths used to scope
+// both the tracing and enforcement policies via matchBinaries, so a policy only
+// hooks the workerd process and not unrelated binaries in the pod.
+func workerdBinaryValues() []interface{} {
+	return []interface{}{
+		"/usr/local/bin/workerd",
+		"/usr/local/lib/node_modules/workerd/bin/workerd",
+		"/usr/local/lib/node_modules/workerd/node_modules/@cloudflare/workerd-linux-64/bin/workerd",
+		"/usr/bin/workerd",
+	}
+}
+
+// EnforcementPolicyName is the deterministic name of the per-worker enforcing
+// TracingPolicyNamespaced rendered when the resolved HardeningProfile sets
+// tetragonEnforceRef. It is distinct from TetragonPolicyName so a profile can
+// both trace (-tracing) and enforce (-enforce) without the two policies
+// colliding.
+func EnforcementPolicyName(worker wulfv1alpha1.SandboxWorker) string {
+	return worker.Name + "-enforce"
+}
+
+// enforcementPolicyResource builds the per-worker enforcing
+// TracingPolicyNamespaced. It hooks the kernel LSM security_* functions (not
+// syscall entry) for the workerd binary and attaches an Override action that
+// returns -EPERM, so a denied network/file/exec/ptrace attempt fails in-place
+// while the worker keeps running — which lets a probe observe and report the
+// denial. Like tracingPolicyResource it is the single source of truth for both
+// the typed controller path and the string preview path, and is pod-selector +
+// matchBinaries scoped to this worker only. Unlike the tracing policy the LSM
+// hook names are architecture-independent (no __x64_ prefix); whether the
+// kernel permits Override on these hooks must be verified on the target cluster.
+func enforcementPolicyResource(worker normalizedWorker) *unstructured.Unstructured {
+	binaries := workerdBinaryValues()
+	arg := func(index int64, argType string) interface{} {
+		return map[string]interface{}{"index": index, "type": argType}
+	}
+	// Each LSM hook matches only the workerd binary and overrides the return
+	// value with -1 (-EPERM), denying the operation at the LSM boundary.
+	lsmKprobe := func(call string, args ...interface{}) interface{} {
+		return map[string]interface{}{
+			"call":    call,
+			"syscall": false,
+			"args":    args,
+			"selectors": []interface{}{
+				map[string]interface{}{
+					"matchBinaries": []interface{}{
+						map[string]interface{}{"operator": "In", "values": binaries},
+					},
+					"matchActions": []interface{}{
+						map[string]interface{}{"action": "Override", "argError": int64(-1)},
+					},
+				},
+			},
+		}
+	}
+
+	labelsObj := make(map[string]interface{}, len(worker.Labels))
+	for key, value := range worker.Labels {
+		labelsObj[key] = value
+	}
+
+	return &unstructured.Unstructured{Object: map[string]interface{}{
+		"apiVersion": TracingPolicyGVK.GroupVersion().String(),
+		"kind":       TracingPolicyGVK.Kind,
+		"metadata": map[string]interface{}{
+			"name":      worker.TetragonEnforceName,
+			"namespace": worker.Namespace,
+			"labels":    labelsObj,
+		},
+		"spec": map[string]interface{}{
+			"podSelector": map[string]interface{}{
+				"matchLabels": map[string]interface{}{"app.kubernetes.io/name": worker.Name},
+			},
+			"kprobes": []interface{}{
+				lsmKprobe("security_socket_connect", arg(1, "sockaddr")),
+				lsmKprobe("security_file_open", arg(0, "file")),
+				lsmKprobe("security_bprm_check", arg(0, "linux_binprm")),
+				lsmKprobe("security_ptrace_access_check", arg(1, "int")),
 			},
 		},
 	}}

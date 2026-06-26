@@ -126,6 +126,22 @@ requires the Tetragon CRDs when a profile actually opts in; the kprobe call
 names are x86_64-specific. See `deploy/profiles/traced-syscalls.yaml` and
 `config/samples/wulf_v1alpha1_sandboxworker_traced.yaml`.
 
+A `HardeningProfile` may additionally set `spec.tetragonEnforceRef`, which is
+orthogonal to `tetragonPolicyRef`: tracing only observes, enforcement denies. The
+only supported value is `bpf-lsm-deny`, which renders a second per-worker
+`TracingPolicyNamespaced` (`<worker>-enforce`) that hooks the kernel LSM
+`security_socket_connect`/`security_file_open`/`security_bprm_check`/`security_ptrace_access_check`
+functions for the workerd binary and attaches `action: Override` returning
+`-EPERM`. A denied operation fails in place while the worker keeps running, so a
+probe can observe and report the denial. Because it hooks the LSM layer rather
+than syscall entry, the call names are architecture-independent. Enforcement
+requires Tetragon running with enforcement enabled and a kernel that permits BPF
+override on these hooks — the render is always correct, but whether it actually
+blocks must be verified on the target cluster. Like the other refs it is scoped
+by `podSelector`/`matchBinaries`, owner-referenced for GC, and fails closed with
+`RenderFailed` on an unsupported value. See `deploy/profiles/bpf-lsm.yaml` and
+`config/samples/wulf_v1alpha1_sandboxworker_bpf_lsm.yaml`.
+
 ## Next controller step
 
 When `kubebuilder` or `controller-gen` is available, this module can be promoted

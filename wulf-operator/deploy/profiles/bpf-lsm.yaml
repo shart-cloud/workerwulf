@@ -1,0 +1,16 @@
+apiVersion: wulf.jaredgore.com/v1alpha1
+kind: HardeningProfile
+metadata:
+  name: bpf-lsm
+  namespace: wulf-system
+spec:
+  description: "seccomp-baseline hardening plus an operator-managed enforcing Tetragon TracingPolicyNamespaced that hooks the kernel LSM security_* functions for the workerd binary and returns -EPERM (action: Override) on network/file/exec/ptrace, scoped to the worker's pods. Enforcement requires Tetragon running with enforcement enabled; verify on the target cluster."
+  seccomp:
+    type: RuntimeDefault
+  capabilitiesDrop:
+    - ALL
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  tetragonEnforceRef: bpf-lsm-deny

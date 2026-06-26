@@ -1,0 +1,36 @@
+apiVersion: wulf.jaredgore.com/v1alpha1
+kind: SandboxWorker
+metadata:
+  name: workerd-rt-001-bpf-lsm
+  namespace: wulf-system
+  labels:
+    wulf.jaredgore.com/track: runtime-fingerprint
+    wulf.jaredgore.com/probe-id: P-WL-RT-001
+spec:
+  script:
+    inline: |
+      export default {
+        fetch() {
+          return Response.json({ ok: true, platform: "wulf-operator", profile: "bpf-lsm" });
+        },
+      };
+  compatibilityDate: "2024-09-23"
+  compatibilityFlags:
+    - nodejs_compat
+  bindings:
+    vars:
+      WORKER_NAME: workerd-rt-001-bpf-lsm
+      HARDENING_PROFILE: bpf-lsm
+  hardening:
+    profile: bpf-lsm
+  runtime:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        cpu: 500m
+        memory: 256Mi
+  exposure:
+    type: ClusterIP
+    port: 8080

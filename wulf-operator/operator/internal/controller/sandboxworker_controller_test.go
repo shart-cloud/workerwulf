@@ -307,6 +307,82 @@ func TestUnknownTetragonPolicyRefSetsFailedStatus(t *testing.T) {
 	}
 }
 
+func TestTetragonEnforceRefAppliesEnforcementPolicyAndDeletesWhenRemoved(t *testing.T) {
+	ctx := context.Background()
+	worker := testWorker("enforced-worker")
+	worker.Spec.Hardening.Profile = "bpf-lsm"
+	profile := testHardeningProfile("bpf-lsm", worker.Namespace, wulfv1alpha1.HardeningProfileSpec{
+		Seccomp:            wulfv1alpha1.SeccompSpec{Type: "RuntimeDefault"},
+		TetragonEnforceRef: render.TetragonEnforceBpfLsmDeny,
+	})
+	reconciler := newTestReconciler(t, &worker, &profile)
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: NamespacedName(&worker)}); err != nil {
+		t.Fatalf("initial Reconcile() error = %v", err)
+	}
+
+	policyKey := client.ObjectKey{Name: render.EnforcementPolicyName(worker), Namespace: worker.Namespace}
+	policy := &unstructured.Unstructured{}
+	policy.SetGroupVersionKind(render.TracingPolicyGVK)
+	if err := reconciler.Get(ctx, policyKey, policy); err != nil {
+		t.Fatalf("Get(enforcement TracingPolicyNamespaced) error = %v", err)
+	}
+	selector, found, err := unstructured.NestedString(policy.Object, "spec", "podSelector", "matchLabels", "app.kubernetes.io/name")
+	if err != nil || !found || selector != worker.Name {
+		t.Fatalf("podSelector app name = %q (found=%v err=%v), want %q", selector, found, err, worker.Name)
+	}
+
+	// status must reflect the applied enforcement ref for the Examiner Portal.
+	var got wulfv1alpha1.SandboxWorker
+	if err := reconciler.Get(ctx, NamespacedName(&worker), &got); err != nil {
+		t.Fatalf("Get(SandboxWorker) error = %v", err)
+	}
+	if got.Status.HardeningApplied.TetragonEnforce != render.TetragonEnforceBpfLsmDeny {
+		t.Fatalf("status.hardeningApplied.tetragonEnforce = %q, want %q", got.Status.HardeningApplied.TetragonEnforce, render.TetragonEnforceBpfLsmDeny)
+	}
+
+	// Drop the ref: the operator must delete the now-orphaned policy.
+	profile.Spec.TetragonEnforceRef = ""
+	if err := reconciler.Update(ctx, &profile); err != nil {
+		t.Fatalf("Update(HardeningProfile) error = %v", err)
+	}
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: NamespacedName(&worker)}); err != nil {
+		t.Fatalf("Reconcile() after removing tetragonEnforceRef error = %v", err)
+	}
+	if err := reconciler.Get(ctx, policyKey, policy); !apierrors.IsNotFound(err) {
+		t.Fatalf("Get(enforcement TracingPolicyNamespaced) after removing ref error = %v, want NotFound", err)
+	}
+}
+
+func TestUnknownTetragonEnforceRefSetsFailedStatus(t *testing.T) {
+	ctx := context.Background()
+	worker := testWorker("unknown-enforce-worker")
+	worker.Spec.Hardening.Profile = "unknown-enforce"
+	profile := testHardeningProfile("unknown-enforce", worker.Namespace, wulfv1alpha1.HardeningProfileSpec{
+		TetragonEnforceRef: "kill-everything",
+	})
+	reconciler := newTestReconciler(t, &worker, &profile)
+
+	if _, err := reconciler.Reconcile(ctx, ctrl.Request{NamespacedName: NamespacedName(&worker)}); err != nil {
+		t.Fatalf("Reconcile() error = %v", err)
+	}
+
+	var got wulfv1alpha1.SandboxWorker
+	if err := reconciler.Get(ctx, NamespacedName(&worker), &got); err != nil {
+		t.Fatalf("Get(SandboxWorker) error = %v", err)
+	}
+	if got.Status.Phase != "Failed" {
+		t.Fatalf("status.phase = %q, want Failed", got.Status.Phase)
+	}
+	condition := readyCondition(got.Status.Conditions)
+	if condition == nil || condition.Reason != "RenderFailed" {
+		t.Fatalf("Ready condition = %#v, want RenderFailed", condition)
+	}
+	if !strings.Contains(condition.Message, `unsupported tetragonEnforceRef "kill-everything"`) {
+		t.Fatalf("Ready message = %q, want unsupported tetragonEnforceRef detail", condition.Message)
+	}
+}
+
 func TestUnrelatedHardeningProfileChangeDoesNotEnqueueWorkers(t *testing.T) {
 	worker := testWorker("seccomp-worker")
 	worker.Spec.Hardening.Profile = "seccomp-baseline"

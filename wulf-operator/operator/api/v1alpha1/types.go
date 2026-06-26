@@ -142,6 +142,7 @@ type HardeningApplied struct {
 	ReadOnlyRootFS   bool     `json:"readOnlyRootFilesystem,omitempty"`
 	NetworkPolicy    string   `json:"networkPolicy,omitempty"`
 	TetragonPolicy   string   `json:"tetragonPolicy,omitempty"`
+	TetragonEnforce  string   `json:"tetragonEnforce,omitempty"`
 }
 
 type HardeningProfile struct {
@@ -170,6 +171,7 @@ type HardeningProfileSpec struct {
 	RunAsUser                int64               `json:"runAsUser,omitempty"`
 	NetworkPolicyRef         string              `json:"networkPolicyRef,omitempty"`
 	TetragonPolicyRef        string              `json:"tetragonPolicyRef,omitempty"`
+	TetragonEnforceRef       string              `json:"tetragonEnforceRef,omitempty"`
 }
 
 type HardeningProfileStatus struct {

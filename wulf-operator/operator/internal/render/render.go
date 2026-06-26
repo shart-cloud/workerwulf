@@ -24,6 +24,18 @@ const NetworkPolicyDenyAllEgress = "deny-all-egress"
 // rendering nothing.
 const TetragonPolicyWorkerdSyscalls = "workerd-syscalls"
 
+// TetragonEnforceBpfLsmDeny is the only supported HardeningProfile
+// tetragonEnforceRef. Unlike tetragonPolicyRef (which only observes), it renders
+// a per-worker enforcing TracingPolicyNamespaced that hooks the kernel LSM
+// security_* functions and returns -EPERM (action: Override) for the workerd
+// binary's network/file/exec/ptrace operations. Hooking the LSM layer rather
+// than syscall entry makes the deny harder to bypass and is architecture-
+// independent (no __x64_ prefix). Like the other refs, any other value fails
+// closed. NOTE: action: Override depends on the kernel exposing these hooks for
+// BPF error injection and on Tetragon running with enforcement enabled — the
+// render is always correct, but whether it blocks must be verified on-cluster.
+const TetragonEnforceBpfLsmDeny = "bpf-lsm-deny"
+
 // DefaultInspectorPort is the V8 inspector (Chrome DevTools Protocol) port
 // workerd binds when spec.runtime.v8Inspector is set.
 const DefaultInspectorPort = 9229
@@ -95,37 +107,47 @@ func RenderSandboxWorker(worker wulfv1alpha1.SandboxWorker, opts Options) ([]Obj
 		objects = append(objects, Object{Kind: "TracingPolicyNamespaced", Name: normalized.TetragonPolicyName, YAML: string(tracingYAML)})
 	}
 
+	if normalized.TetragonEnforceRef != "" {
+		enforceYAML, err := yaml.Marshal(enforcementPolicyResource(normalized).Object)
+		if err != nil {
+			return nil, err
+		}
+		objects = append(objects, Object{Kind: "TracingPolicyNamespaced", Name: normalized.TetragonEnforceName, YAML: string(enforceYAML)})
+	}
+
 	return objects, nil
 }
 
 type normalizedWorker struct {
-	Name               string
-	Namespace          string
-	Image              string
-	ConfigMapName      string
-	InlineScript       string
-	CompatibilityDate  string
-	CompatibilityFlags []string
-	Labels             map[string]string
-	LabelPairs         []labelPair
-	Vars               []bindingVar
-	Services           []serviceBinding
-	HardeningProfile   string
-	HardeningSpec      *wulfv1alpha1.HardeningProfileSpec
-	ExposureType       string
-	Port               int
-	CPURequest         string
-	MemoryRequest      string
-	CPULimit           string
-	MemoryLimit        string
-	SecurityContext    string
-	NetworkPolicyRef   string
-	NetworkPolicyName  string
-	TetragonPolicyRef  string
-	TetragonPolicyName string
-	ResultSinkURL      string
-	V8Inspector        bool
-	InspectorPort      int
+	Name                string
+	Namespace           string
+	Image               string
+	ConfigMapName       string
+	InlineScript        string
+	CompatibilityDate   string
+	CompatibilityFlags  []string
+	Labels              map[string]string
+	LabelPairs          []labelPair
+	Vars                []bindingVar
+	Services            []serviceBinding
+	HardeningProfile    string
+	HardeningSpec       *wulfv1alpha1.HardeningProfileSpec
+	ExposureType        string
+	Port                int
+	CPURequest          string
+	MemoryRequest       string
+	CPULimit            string
+	MemoryLimit         string
+	SecurityContext     string
+	NetworkPolicyRef    string
+	NetworkPolicyName   string
+	TetragonPolicyRef   string
+	TetragonPolicyName  string
+	TetragonEnforceRef  string
+	TetragonEnforceName string
+	ResultSinkURL       string
+	V8Inspector         bool
+	InspectorPort       int
 }
 
 type labelPair struct {
@@ -186,6 +208,10 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 	if err != nil {
 		return normalizedWorker{}, err
 	}
+	tetragonEnforceRef, err := tetragonEnforceRefFor(hardeningSpec)
+	if err != nil {
+		return normalizedWorker{}, err
+	}
 
 	labels := map[string]string{
 		"app.kubernetes.io/name":               worker.Name,
@@ -198,33 +224,35 @@ func normalize(worker wulfv1alpha1.SandboxWorker, opts Options) (normalizedWorke
 
 	resources := worker.Spec.Runtime.Resources
 	normalized := normalizedWorker{
-		Name:               worker.Name,
-		Namespace:          namespace,
-		Image:              image,
-		ConfigMapName:      worker.Name + "-config",
-		InlineScript:       worker.Spec.Script.Inline,
-		CompatibilityDate:  worker.Spec.CompatibilityDate,
-		CompatibilityFlags: worker.Spec.CompatibilityFlags,
-		Labels:             labels,
-		LabelPairs:         sortedLabels(labels),
-		Vars:               sortedVars(worker.Spec.Bindings.Vars),
-		Services:           sortedServices(worker.Spec.Bindings.Services),
-		HardeningProfile:   profile,
-		HardeningSpec:      hardeningSpec,
-		ExposureType:       exposureType,
-		Port:               port,
-		CPURequest:         defaultString(resources.Requests.CPU, "100m"),
-		MemoryRequest:      defaultString(resources.Requests.Memory, "128Mi"),
-		CPULimit:           defaultString(resources.Limits.CPU, "500m"),
-		MemoryLimit:        defaultString(resources.Limits.Memory, "256Mi"),
-		SecurityContext:    securityContextFor(profile, hardeningSpec),
-		NetworkPolicyRef:   networkPolicyRef,
-		NetworkPolicyName:  NetworkPolicyName(worker),
-		TetragonPolicyRef:  tetragonPolicyRef,
-		TetragonPolicyName: TetragonPolicyName(worker),
-		ResultSinkURL:      worker.Spec.Instrumentation.ResultSink.Endpoint,
-		V8Inspector:        worker.Spec.Runtime.V8Inspector,
-		InspectorPort:      DefaultInspectorPort,
+		Name:                worker.Name,
+		Namespace:           namespace,
+		Image:               image,
+		ConfigMapName:       worker.Name + "-config",
+		InlineScript:        worker.Spec.Script.Inline,
+		CompatibilityDate:   worker.Spec.CompatibilityDate,
+		CompatibilityFlags:  worker.Spec.CompatibilityFlags,
+		Labels:              labels,
+		LabelPairs:          sortedLabels(labels),
+		Vars:                sortedVars(worker.Spec.Bindings.Vars),
+		Services:            sortedServices(worker.Spec.Bindings.Services),
+		HardeningProfile:    profile,
+		HardeningSpec:       hardeningSpec,
+		ExposureType:        exposureType,
+		Port:                port,
+		CPURequest:          defaultString(resources.Requests.CPU, "100m"),
+		MemoryRequest:       defaultString(resources.Requests.Memory, "128Mi"),
+		CPULimit:            defaultString(resources.Limits.CPU, "500m"),
+		MemoryLimit:         defaultString(resources.Limits.Memory, "256Mi"),
+		SecurityContext:     securityContextFor(profile, hardeningSpec),
+		NetworkPolicyRef:    networkPolicyRef,
+		NetworkPolicyName:   NetworkPolicyName(worker),
+		TetragonPolicyRef:   tetragonPolicyRef,
+		TetragonPolicyName:  TetragonPolicyName(worker),
+		TetragonEnforceRef:  tetragonEnforceRef,
+		TetragonEnforceName: EnforcementPolicyName(worker),
+		ResultSinkURL:       worker.Spec.Instrumentation.ResultSink.Endpoint,
+		V8Inspector:         worker.Spec.Runtime.V8Inspector,
+		InspectorPort:       DefaultInspectorPort,
 	}
 	if normalized.CompatibilityDate == "" {
 		normalized.CompatibilityDate = "2024-09-23"
@@ -325,6 +353,18 @@ func tetragonPolicyRefFor(spec *wulfv1alpha1.HardeningProfileSpec) (string, erro
 		return spec.TetragonPolicyRef, nil
 	default:
 		return "", fmt.Errorf("unsupported tetragonPolicyRef %q", spec.TetragonPolicyRef)
+	}
+}
+
+func tetragonEnforceRefFor(spec *wulfv1alpha1.HardeningProfileSpec) (string, error) {
+	if spec == nil || spec.TetragonEnforceRef == "" {
+		return "", nil
+	}
+	switch spec.TetragonEnforceRef {
+	case TetragonEnforceBpfLsmDeny:
+		return spec.TetragonEnforceRef, nil
+	default:
+		return "", fmt.Errorf("unsupported tetragonEnforceRef %q", spec.TetragonEnforceRef)
 	}
 }
 
