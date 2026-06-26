@@ -11,6 +11,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -79,6 +80,14 @@ func (r *SandboxWorkerReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, err
 	}
 
+	if resources.TracingPolicy != nil {
+		if err := r.applyOwned(ctx, &worker, resources.TracingPolicy); err != nil {
+			return ctrl.Result{}, err
+		}
+	} else if err := r.deleteTracingPolicy(ctx, &worker); err != nil {
+		return ctrl.Result{}, err
+	}
+
 	status, err := r.observedStatus(ctx, &worker, &profile.Spec)
 	if err != nil {
 		return ctrl.Result{}, err
@@ -128,6 +137,22 @@ func (r *SandboxWorkerReconciler) deleteNetworkPolicy(ctx context.Context, worke
 		},
 	}
 	return client.IgnoreNotFound(r.Delete(ctx, policy))
+}
+
+func (r *SandboxWorkerReconciler) deleteTracingPolicy(ctx context.Context, worker *wulfv1alpha1.SandboxWorker) error {
+	policy := &unstructured.Unstructured{}
+	policy.SetGroupVersionKind(render.TracingPolicyGVK)
+	policy.SetName(render.TetragonPolicyName(*worker))
+	policy.SetNamespace(worker.Namespace)
+	// A worker whose profile never set tetragonPolicyRef has no policy and,
+	// on a cluster without the Tetragon CRDs, the kind itself is unknown.
+	// Treat both NotFound and "no matching kind" as already-absent so the
+	// common naked/seccomp path never wedges the reconcile.
+	err := r.Delete(ctx, policy)
+	if apimeta.IsNoMatchError(err) {
+		return nil
+	}
+	return client.IgnoreNotFound(err)
 }
 
 func (r *SandboxWorkerReconciler) requestsForHardeningProfile(ctx context.Context, object client.Object) []ctrl.Request {
