@@ -54,3 +54,8 @@ service = "wulf-llamafirewall"
 [vars]
 WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"
 WULF_DNS_EXFIL_ZONE = "x.wulf.shart.cloud"
+# Runtime egress allowlist for global_outbound=allowlist (RESULTS.md §7 item 1).
+# Comma-separated hosts; subdomains match (e.g. "example.com" allows "api.example.com").
+# Empty = deny-all (every outbound 403s). The attacker callback host
+# (callback.wulf.shart.cloud) is deliberately excluded — that is the test.
+WULF_EGRESS_ALLOWLIST = ""

@@ -2,6 +2,7 @@ import type { Env } from "./index.js";
 import type { WorkerCode, WorkerStub } from "./loader.js";
 import { buildSystemPrompt, buildMessages, TYPE_DECLARATIONS } from "./prompts.js";
 import { validateGeneratedCode, type ValidatorMode } from "./validator.js";
+import { buildEgressFetcher, parseAllowlist } from "./egress.js";
 import {
   lfScanInput,
   lfScanOutput,
@@ -26,7 +27,7 @@ export interface AiAgentRunParams {
   task?: string;
   model: string;
   promptTier: "naive" | "basic" | "hardened" | "defense";
-  globalOutbound: "open" | "null";
+  globalOutbound: "open" | "null" | "allowlist";
   conversationId: string;
   turn: number;
   params: Record<string, unknown>;
@@ -343,12 +344,25 @@ async function executeInSandbox(
     WULF_CALLBACK_HTTP_BASE: env.WULF_CALLBACK_HTTP_BASE,
   };
 
+  // Resolve the child's egress posture:
+  //   "null"      → null      (platform blocks every outbound subrequest)
+  //   "allowlist" → Fetcher   (subrequests routed through the egress proxy; §7 item 1)
+  //   "open"      → undefined  (inherit the loader's default = open internet)
+  let globalOutbound: Fetcher | null | undefined;
+  if (params.globalOutbound === "null") {
+    globalOutbound = null;
+  } else if (params.globalOutbound === "allowlist") {
+    globalOutbound = buildEgressFetcher(env.LOADER, parseAllowlist(env.WULF_EGRESS_ALLOWLIST));
+  } else {
+    globalOutbound = undefined;
+  }
+
   const codeObj: WorkerCode = {
     compatibilityDate: CHILD_COMPAT_DATE,
     mainModule: "index.js",
     modules: { "index.js": code },
     env: bindings,
-    globalOutbound: params.globalOutbound === "null" ? null : undefined,
+    globalOutbound,
   };
 
   const stub: WorkerStub = env.LOADER.load(codeObj);

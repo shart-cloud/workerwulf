@@ -17,13 +17,15 @@ export interface Env {
   LLAMAFIREWALL?: Fetcher;
   WULF_CALLBACK_HTTP_BASE?: string;
   WULF_DNS_EXFIL_ZONE?: string;
+  // Comma-separated host allowlist for the runtime egress proxy (global_outbound=allowlist).
+  WULF_EGRESS_ALLOWLIST?: string;
   [key: string]: unknown;
 }
 
 export interface AiAgentRequest {
   run_id?: string;
   prompt_tier?: "naive" | "basic" | "hardened" | "defense";
-  global_outbound?: "open" | "null";
+  global_outbound?: "open" | "null" | "allowlist";
   model?: string;
   conversation_id?: string;
   turn?: number;
