@@ -1,0 +1,20 @@
+[
+  {
+    "timestamp": "2026-06-22T20:40:49.240Z",
+    "test_id": "W-CAP-01",
+    "track": "capability",
+    "description": "cred exposure via over-granted binding",
+    "result": "accessible",
+    "severity": "high",
+    "run_id": "deploy-verified"
+  },
+  {
+    "timestamp": "2026-06-22T20:40:49.240Z",
+    "test_id": "W-BND-02",
+    "track": "capability",
+    "description": "storage list() enumeration blast radius",
+    "result": "blocked",
+    "severity": "medium",
+    "run_id": "deploy-verified"
+  }
+]

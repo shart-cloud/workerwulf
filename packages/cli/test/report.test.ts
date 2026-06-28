@@ -13,7 +13,7 @@ import { loadRunReports } from "../src/report/persist.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const vulnerable = join(here, "fixtures", "vulnerable");
 const families = join(here, "fixtures", "families");
-const harnessResults = join(here, "..", "..", "harness", "results");
+const harnessResults = join(here, "fixtures", "probes");
 
 const tmp = () => mkdtempSync(join(tmpdir(), "wulf-report-"));
 
