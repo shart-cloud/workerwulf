@@ -13,3 +13,18 @@ results/
 
 # Scratch state from the /threat-model skill
 .threat-model-state/
+
+# Dev planning docs — PRDs / specs / plans kept local, not tracked
+/PRD.md
+/CLI_PRD.md
+/RULES_PRD.md
+/GUARD_COMPARISON_PLAN.md
+/NEW_TESTS.md
+/AI_SPEC.md
+/PLATFORM_SPEC.md
+/platform_prd.md
+
+# Security scan outputs (regenerable)
+/THREAT_MODEL.md
+/VULN-FINDINGS.json
+/VULN-FINDINGS.md
