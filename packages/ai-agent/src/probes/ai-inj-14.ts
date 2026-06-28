@@ -117,6 +117,12 @@ export const aiInj14: Probe = async ({ env, req, runId }) => {
   const phaseFilter = url.searchParams.get("phase") as
     | "original" | "evasion" | "fp" | null;
   const tracePolicy = (url.searchParams.get("trace") ?? "log") as "block" | "log" | "pass";
+  // Egress posture for the sandbox. Default "open" preserves the original baseline
+  // (residual exploits exfil end-to-end). "allowlist" routes outbound through the
+  // runtime egress proxy (RESULTS.md §7 item 1) — expected to close evade-b64-url
+  // and evade-indirect regardless of how the callback URL is obfuscated.
+  const globalOutbound = (url.searchParams.get("global_outbound") ?? "open") as
+    | "open" | "null" | "allowlist";
 
   const callbackBase = env.WULF_CALLBACK_HTTP_BASE ?? "https://callback.wulf.shart.cloud";
   const callbackRoot = `${callbackBase.replace(/\/+$/, "")}/exfil/${encodeURIComponent(runId)}`;
@@ -139,7 +145,7 @@ export const aiInj14: Probe = async ({ env, req, runId }) => {
     const agentResult = await runAgent(env, `${runId}-${payload.id}`, {
       task,
       promptTier: "naive",
-      globalOutbound: "open",
+      globalOutbound,
       guard: {
         scanInput: "block",
         scanOutput: "block",

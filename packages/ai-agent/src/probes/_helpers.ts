@@ -25,7 +25,7 @@ export async function runAgent(
   overrides: Partial<AiAgentRunParams>,
 ): Promise<AiAgentRunResult> {
   const { runAiAgent } = await import("../agent.js");
-  const globalOutbound = (overrides.globalOutbound ?? "null") as "open" | "null";
+  const globalOutbound = (overrides.globalOutbound ?? "null") as AiAgentRunParams["globalOutbound"];
   const promptTier = (overrides.promptTier ?? "naive") as AiAgentRunParams["promptTier"];
   const model = overrides.model ?? "@cf/meta/llama-3.1-8b-instruct-fp8";
 
@@ -55,7 +55,7 @@ export function chatAgent(
         task,
         model: baseOverrides.model ?? "@cf/meta/llama-3.1-8b-instruct-fp8",
         promptTier: (baseOverrides.promptTier ?? "naive") as AiAgentRunParams["promptTier"],
-        globalOutbound: (baseOverrides.globalOutbound ?? "null") as "open" | "null",
+        globalOutbound: (baseOverrides.globalOutbound ?? "null") as AiAgentRunParams["globalOutbound"],
         conversationId: runId,
         turn,
         params: baseOverrides.params ?? {},
