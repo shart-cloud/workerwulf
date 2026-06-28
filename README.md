@@ -59,7 +59,6 @@ A pnpm workspace monorepo.
 | [`@wulf/codeshield`](packages/codeshield/) | Standalone CodeShield container (image built, consolidated into LlamaFirewall in practice). |
 | [`@wulf/harness`](packages/harness/) | CLI test harness — runs probes and collects results to `packages/harness/results/`. |
 | [`@wulf/shared`](packages/shared/) | Shared types (`ProbeResult`, `Track`, …). |
-| [`@wulf/astro`](packages/astro/) | Astro frontend for the shart.cloud lab. |
 | [`@wulf/worker`](packages/worker/), [`@wulf/durable`](packages/durable/), [`@wulf/dynamic-parent`](packages/dynamic-parent/), [`@wulf/platform`](packages/platform/) | Track 1–3 introspection workers and supporting infrastructure. |
 | [`callbackd`](packages/callbackd/) | Go callback server (receives exfil/callback probes). Infra in [`infra/`](infra/). |
 
