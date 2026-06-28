@@ -1,0 +1,10 @@
+{
+  "name": "rules-bad",
+  "type": "module",
+  "scripts": {
+    "postinstall": "node scripts/install.js"
+  },
+  "dependencies": {
+    "lodash": "^4.17.21"
+  }
+}

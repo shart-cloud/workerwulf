@@ -1,5 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 
 import { parse } from "../src/ast/parse.js";
@@ -23,6 +25,28 @@ const here = dirname(fileURLToPath(import.meta.url));
 const vulnerable = join(here, "fixtures", "vulnerable");
 const clean = join(here, "fixtures", "clean");
 const families = join(here, "fixtures", "families");
+const rulesBad = join(here, "fixtures", "rules-bad");
+const rulesSafe = join(here, "fixtures", "rules-safe");
+const corsLow = join(here, "fixtures", "cors-low");
+
+interface JsonFinding {
+  rule_id: string;
+  severity: string;
+  resource: string;
+}
+
+interface JsonSource {
+  source: string;
+  findings: JsonFinding[];
+}
+
+const parsedSources = (output: string): JsonSource[] =>
+  (JSON.parse(output) as { sources: JsonSource[] }).sources;
+
+const allFindings = (output: string): JsonFinding[] =>
+  parsedSources(output).flatMap((source) => source.findings);
+
+const allRuleIds = (output: string): string[] => allFindings(output).map((f) => f.rule_id);
 
 const firstOfType = (code: string, type: string) =>
   findNodes(parse("t.ts", code).ast, type)[0]!.node;
@@ -193,5 +217,84 @@ describe("phase 2 source rules — full family coverage", () => {
     const parsed = JSON.parse(output);
     const src = parsed.sources.find((s: { source: string }) => s.source.endsWith("index.ts"));
     expect(src.findings).toHaveLength(0);
+  });
+});
+
+describe("expanded Worker source and supply-chain rules", () => {
+  const NEW_RULE_IDS = [
+    "WF-REQ-SSRF-01",
+    "WF-REQ-REDIR-01",
+    "WF-REQ-CORS-01",
+    "WF-REQ-HDR-01",
+    "WF-CACHE-POISON-01",
+    "WF-CACHE-POISON-02",
+    "WF-CACHE-SENSITIVE-01",
+    "WF-HANDLER-PRIV-01",
+    "WF-SVC-AUTH-01",
+    "WF-SVC-AUTH-02",
+    "WF-SC-PKG-01",
+    "WF-SC-PKG-02",
+    "WF-SC-DOCKER-01",
+    "WF-SC-DOCKER-02",
+    "WF-SC-PY-01",
+  ];
+
+  it("scans helper source files beyond wrangler main", () => {
+    const { output } = runAudit([rulesBad], { source: true, json: true });
+    const sources = parsedSources(output);
+    expect(sources.some((s) => s.source.endsWith("src/helper.ts"))).toBe(true);
+    const helper = sources.find((s) => s.source.endsWith("src/helper.ts"));
+    expect(helper?.findings.map((f) => f.rule_id)).toContain("WF-REQ-SSRF-01");
+  });
+
+  it("fires the new request, cache, handler, service, and supply-chain rules", () => {
+    const { output } = runAudit([rulesBad], { source: true, json: true, severity: "informational" });
+    const ids = allRuleIds(output);
+    for (const id of NEW_RULE_IDS) {
+      expect(ids, `expected ${id} to fire`).toContain(id);
+    }
+  });
+
+  it("does not flag safe static fetch, allowlisted redirect, cache key, guarded queue, or service auth propagation", () => {
+    const { output } = runAudit([rulesSafe], { source: true, json: true, severity: "informational" });
+    const ids = allRuleIds(output);
+    for (const id of [
+      "WF-REQ-SSRF-01",
+      "WF-REQ-REDIR-01",
+      "WF-CACHE-POISON-01",
+      "WF-CACHE-POISON-02",
+      "WF-HANDLER-PRIV-01",
+      "WF-SVC-AUTH-01",
+    ]) {
+      expect(ids).not.toContain(id);
+    }
+  });
+
+  it("raises wildcard CORS severity when sensitive bindings are declared", () => {
+    const { output } = runAudit([rulesBad], { source: true, json: true, severity: "informational" });
+    const corsFindings = allFindings(output).filter((f) => f.rule_id === "WF-REQ-CORS-01");
+    expect(corsFindings.length).toBeGreaterThan(0);
+    expect(corsFindings.some((f) => f.severity === "high")).toBe(true);
+  });
+
+  it("reports wildcard CORS without sensitive bindings at low severity", () => {
+    const { output } = runAudit([corsLow], { source: true, json: true, severity: "informational" });
+    const corsFindings = allFindings(output).filter((f) => f.rule_id === "WF-REQ-CORS-01");
+    expect(corsFindings).toHaveLength(1);
+    expect(corsFindings[0]?.severity).toBe("low");
+  });
+
+  it("flags a package-manager project without a lockfile", () => {
+    const dir = mkdtempSync(join(tmpdir(), "wulf-lock-"));
+    try {
+      mkdirSync(join(dir, "src"));
+      writeFileSync(join(dir, "wrangler.toml"), 'name = "no-lock"\nmain = "src/index.ts"\ncompatibility_date = "2026-05-01"\n');
+      writeFileSync(join(dir, "package.json"), '{"name":"no-lock","dependencies":{"left-pad":"1.3.0"}}\n');
+      writeFileSync(join(dir, "src", "index.ts"), 'export default { fetch() { return new Response("ok"); } };\n');
+      const { output } = runAudit([dir], { source: true, json: true, severity: "informational" });
+      expect(allRuleIds(output)).toContain("WF-SC-LOCK-01");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
