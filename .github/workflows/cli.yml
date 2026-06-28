@@ -70,7 +70,7 @@ jobs:
           # Clean fixture must pass --strict — this is the green CI path the tool promises.
           node dist/index.js audit test/fixtures/clean --source --strict
           # Coverage matrix doubles as a traceability gate: exits 1 if any rule lacks a probe (§14).
-          node dist/index.js report --matrix --include-probes ../harness/results > /dev/null
+          node dist/index.js report --matrix --include-probes test/fixtures/probes > /dev/null
           # Publish tarball must contain only dist/ + README.
           npm pack --dry-run
 
