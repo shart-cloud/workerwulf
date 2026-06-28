@@ -81,4 +81,111 @@ and read `restartCount` / `lastState.terminated.reason` on the target pod(s).
 **Open follow-ons:** (a) does a per-isolate V8 heap cap (if workerd exposes one)
 change the outcome, or only convert OOM-kill into in-isolate `RangeError`?
 (b) timing covert channel between co-located isolates; (c) shared Cache API /
-compilation-cache state across isolates.
+compilation-cache state across isolates — **addressed in F-3 below**.
+
+---
+
+## F-2 — The isolate boundary provides no resource isolation of *any* kind; the failure mode is set by the cgroup, and differs per resource
+
+**Status:** deploy-verified 2026-06-26.
+**Question (F-1 follow-on (d)):** F-1 showed co-located isolates share *memory*
+fate. Is that specific to memory, or do other resources (CPU) share fate too?
+
+**Method.** Committed, reproducible successor to F-1's ad-hoc kubectl drive:
+`probes/isolate/iso-shared-fate.js` (one role-switched worker module) + a driver
+`probes/isolate/iso-shared-fate.sh` that renders the manifests from the probe,
+applies the same two arrangements as F-1 (co-located `maxIsolates: 2` in one
+256Mi pod; separated = two pods), and drives the matrix from in-cluster curl
+pods. For CPU, the worker times a fixed compute burst and returns absolute
+`started_at` / `ended_at` epoch ms, so the driver can fire two bursts
+concurrently and check whether they actually **overlapped** in time — the real
+contention signal. (A first pass that compared `work_ms` alone was misleading:
+two co-located bursts each report their own throttled time and look identical to
+solo even when they ran one-after-the-other.)
+
+**Result.**
+
+| Resource | Co-located (one pod, V8 isolate boundary) | Separated (two pods, cgroup) |
+|---|---|---|
+| **Memory** | isolate-0 OOMs → pod `OOMKilled`, restart 0→1; isolate-1 **died with it** | aggressor pod restart 0→1; victim **restart 0, still `{"alive":true}`** |
+| **CPU** | two concurrent bursts ran **sequentially** — `overlap = 0 ms`, total wall ≈ **2460 ms** (1239 + 1220) | two concurrent bursts ran **in parallel** — `overlap ≈ 1175 ms` (full burst), total wall ≈ **1182 ms** |
+
+Supporting check (`… enforce`): the CPU cgroup quota *is* enforced — the same
+single burst at `cpu.max` of 0.2 / 0.5 / 2.0 core took ≈3000 / 1220 / 628 ms
+(perfectly proportional; full one-core time ≈628 ms).
+
+**Interpretation.** Both resources share fate when co-located; the *mechanism*
+differs. Memory reproduces F-1 (the shared cgroup OOM-kills the whole pod). CPU
+shares fate via **serialization**, not throttling: a synchronous CPU-bound
+isolate monopolizes the single workerd execution thread, so a co-located
+neighbour's request cannot even start until the aggressor's loop finishes
+(`overlap = 0`; the neighbour's `started_at` is 2 ms *after* the aggressor's
+`ended_at`). Two isolates in **separate** workerd processes run genuinely in
+parallel (`overlap ≈ full burst`). Note this is the synchronous-CPU case;
+I/O-bound work that awaits would yield the thread and interleave.
+
+> **Correction.** An earlier pass concluded "no CPU shared fate" because the two
+> co-located bursts each clocked ≈1220 ms, the same as solo. That was an artifact:
+> they were *serialized*, so each still ran alone at the 0.5-core-throttled rate —
+> and 1220 ms was itself the *throttled* time (the `enforce` test shows full speed
+> is ≈628 ms), not "full single-core speed" as first written. The timestamp
+> overlap check is what exposed it.
+
+So the unifying statement is sharper than F-1: **the V8 isolate boundary provides
+no resource isolation of any kind — not memory, not CPU.** Co-located isolates
+share both the memory cgroup (→ shared OOM) *and* the execution thread (→ a
+CPU-bound tenant stalls all co-tenants — a noisy-neighbour/DoS property stronger
+than throttling). Isolation comes only from running in separate
+processes/pods/cgroups. The "what CF adds" thesis extends: Cloudflare must supply
+**per-isolate** resource accounting *and* preemptive CPU scheduling, because
+co-located OSS workerd isolates get neither.
+
+**Reproduce.** `probes/isolate/iso-shared-fate.sh up && … mem && … cpu && … enforce`
+(see `probes/isolate/README.md`). `fd` (socket-flood) is implemented but left
+exploratory — it needs egress and is meaningless under `deny-all-egress`.
+
+**Open follow-ons:** does an async/I/O-yielding aggressor interleave with its
+co-tenant (confirming the serialization is specific to synchronous CPU)? The
+per-isolate V8 heap-cap question (F-1 (a)) is still open and is now blocked on a
+CRD/render knob the operator doesn't expose.
+
+---
+
+## F-3 — There is no Cache API to leak: OSS workerd ships the binding surface but no cache backend
+
+**Status:** deploy-verified 2026-06-26.
+**Question (F-1 follow-on (c)):** can a co-located isolate read another isolate's
+`caches.default` entries (a cross-tenant confidentiality leak)?
+
+**Method.** Same harness. `role=cache-write` puts a canary secret into
+`caches.default` under a key on isolate-0 (`:8080`); `role=cache-read` reads the
+same key from isolate-1 (`:8081`). Separated pods as control.
+
+**Result.** Every `caches.default` access — write *and* read, on every isolate,
+in both arrangements — throws:
+
+```
+{"role":"cache-write","result":"error","error_name":"Error","message":"No Cache was configured"}
+```
+
+`typeof globalThis.caches` is `"object"` (the binding surface exists), but
+`.default.put` / `.match` throw `No Cache was configured`.
+
+**Interpretation.** The intended leak test is **moot**: in OSS workerd the Cache
+API has no backing store unless the worker config wires `cacheApiOutbound` to a
+cache service, which the operator does not render. So cross-isolate cache-state
+isolation is **not a workerd-level property at all** — the Cache API is entirely
+platform-provided. This is itself a clean piece of the "what CF adds" thesis,
+parallel to F-1/F-2: Cloudflare supplies the Cache API *backend* (and with it,
+whatever cross-tenant namespacing it enforces); open-source workerd ships only
+the `caches` global and errors on use.
+
+A meaningful isolation test only becomes possible *after* a backend is wired, and
+even then "isolation" would be a property of that `cacheApiOutbound` service (one
+shared service ⇒ shared by construction), not of the V8 isolate boundary.
+
+**Reproduce.** `probes/isolate/iso-shared-fate.sh cache`.
+
+**Open follow-ons:** add a `cacheApiOutbound` cache service to the operator's
+workerd render, then re-probe to characterize the backend's cross-isolate
+namespacing; compilation-cache sharing across isolates remains unprobed.
