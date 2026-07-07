@@ -83,9 +83,9 @@ queue = "wulf-prey-queue"
 # W-CAP-07 (mTLS client certificate). Upload the cert first:
 #   wrangler mtls-certificate upload --cert cert.pem --key key.pem --name wulf-mtls
 # Set certificate_id to the returned id.
-# [[mtls_certificates]]
-# binding = "MTLS_FETCHER"
-# certificate_id = "<wrangler mtls-certificate list -> id>"
+[[mtls_certificates]]
+binding = "MTLS_FETCHER"
+certificate_id = "52a8fbc3-4878-4979-88a1-8e0074620154"   # wulf-mtls-badssl (badssl.com public client cert)
 
 # W-CAP-08 (Workers Analytics Engine). No resource to create; the dataset is
 # named inline and created on first write.

@@ -20,9 +20,13 @@ cd packages/harness && pnpm start run --test W-CAP-0X \
 > `accessible` against `wulf-worker.sharted.workers.dev` (latest version
 > `1cf42136`). W-CAP-05 (Browser) confirmed `accessible` (fetched example.com,
 > HTTP 200). Raw results in `packages/harness/results/w-cap-0*-wave4*.json`.
-> Still pending: **W-CAP-01** (Hyperdrive — waiting on CNPG Postgres backing),
-> **W-CAP-03** (send_email — needs verified domain/address), **W-CAP-07** (mTLS —
-> needs cert material + backend).
+>
+> **Update (2026-07-07):** **W-CAP-07** (mTLS) now DEPLOY-VERIFIED `accessible`/`high`
+> — the `MTLS_FETCHER` binding is present and drivable by any isolate code (see the
+> W-CAP-07 section for the Cloudflare-egress caveat that blocks the *authenticated-reach*
+> half of the demo).
+> Still pending: **W-CAP-01** (Hyperdrive — waiting on CNPG Postgres backing) and
+> **W-CAP-03** (send_email — needs verified domain/address).
 
 ## W-CAP-09 — Workers AI (unmetered inference / financial DoS) — VERIFIED accessible/high
 
@@ -68,7 +72,7 @@ Expected: `accessible`/`high` with `message_sent:true`. (A consumer Worker is no
 required to prove the producer capability; acceptance into the queue is the
 finding. Bind a consumer separately if you want to observe downstream effect.)
 
-## W-CAP-07 — mTLS client certificate (authenticated SSRF) — IMPLEMENTED (not yet deployed)
+## W-CAP-07 — mTLS client certificate (authenticated SSRF) — DEPLOY-VERIFIED accessible/high (2026-07-07)
 
 An `mtls_certificates` binding attaches a client cert to outbound requests through
 `env.MTLS_FETCHER.fetch()`. A compromised Worker borrows the cert's identity to
@@ -76,12 +80,54 @@ reach an mTLS-protected origin — strictly stronger than the bare `fetch()` of
 W-NET-* because the request arrives already trusted.
 
 ```bash
-wrangler mtls-certificate upload --cert cert.pem --key key.pem --name wulf-mtls
-# Uncomment [[mtls_certificates]] in wrangler.toml; set certificate_id.
+# The public badssl client cert (PKCS#12, password "badssl.com") was used as
+# cert material — a known cert that client.badssl.com itself accepts.
+curl -sL https://badssl.com/certs/badssl.com-client.p12 -o badssl.p12
+openssl pkcs12 -in badssl.p12 -clcerts -nokeys -out cert.pem -passin pass:badssl.com -legacy
+openssl pkcs12 -in badssl.p12 -nocerts -nodes  -out key.pem  -passin pass:badssl.com -legacy
+wrangler mtls-certificate upload --cert cert.pem --key key.pem --name wulf-mtls-badssl
+# Uncomment [[mtls_certificates]] in wrangler.toml; set certificate_id; deploy.
 ```
-Expected: `accessible`/`high` with `http_status` populated. Pass
-`?target=https://<mtls-protected-backend>/` to demonstrate authenticated reach;
-defaults to `https://example.com/` to prove the fetcher works.
+
+**Result — binding accessible/high, authenticated reach blocked by Cloudflare egress.**
+The binding is present and any isolate code can drive it:
+
+| `?target=` | Origin TLS / trust | Result |
+|---|---|---|
+| `https://example.com/` | 1.3, no client-cert request | `accessible`/`high`, **HTTP 200** — fetcher usable at will |
+| `https://client.badssl.com/` | **1.2**, requests cert, **trusts our cert** (`curl --cert` → 200) | **HTTP 500** (`server: cloudflare`, empty body) |
+| `https://prod.idrix.eu/secure/`, `https://certauth.cryptomix.com/json/` | 1.3, require *their own* client CA | HTTP 500 (origin TLS-rejects our cert — expected) |
+
+The **blast-radius thesis is confirmed**: `env.MTLS_FETCHER` is freely drivable by
+any code in the isolate (example.com → 200), exactly like the other W-CAP bindings.
+
+The **authenticated-reach half could not be demonstrated end-to-end** against public
+mTLS reflectors, for a Cloudflare-platform reason rather than a probe defect:
+
+- The 500s carry `server: cloudflare` + `cf-ray` + empty body — they are **edge-synthesized
+  handshake failures at Cloudflare's egress**, not the origin's response (badssl's own
+  200/400 carry `Server: nginx`). Not the documented **520** proxied-zone case (none of
+  these origins are CF-proxied); server certs are publicly trusted (Full-strict passes);
+  and the cert is requested in the *initial* handshake (not the documented TLS-1.3
+  no-renegotiation case).
+- The one public origin that **accepts our client cert** is `client.badssl.com`, and it is
+  **TLS 1.2**-only. Cloudflare's egress 500s when presenting the client cert there even
+  though the origin trusts it (`curl --cert` → 200) — the failure is isolated to
+  **CF egress client-cert presentation over TLS 1.2**.
+- The TLS 1.3 reflectors (idrix, cryptomix) require their *own* client CA, so they
+  legitimately TLS-reject the badssl cert; we don't hold their cert. No public origin
+  exists that both accepts our cert **and** runs TLS 1.3.
+- Corroborated by multiple Cloudflare community reports of outbound "mTLS fetch not
+  working on Workers" against external servers.
+
+**To obtain the textbook `200-with / reject-without` proof** (deferred), stand up a
+non-CF-proxied origin with a public (Let's Encrypt) server cert running nginx TLS 1.3
+`ssl_verify_client on` trusting our client CA — the documented-supported configuration —
+and confirm whether CF's egress completes it or fails even there.
+
+> Cert `wulf-mtls-badssl` id `52a8fbc3-4878-4979-88a1-8e0074620154`; deployed version
+> under `wulf-worker.sharted.workers.dev`. The badssl client cert is public and expires
+> 2028-07-06 — no secret material committed.
 
 ## W-CAP-08 — Workers Analytics Engine (telemetry poisoning) — VERIFIED accessible/medium
 

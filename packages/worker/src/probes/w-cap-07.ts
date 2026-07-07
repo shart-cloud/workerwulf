@@ -36,6 +36,8 @@ export const wCap07: Probe = async ({ env, req, runId }) => {
   const target = url.searchParams.get("target") ?? "https://example.com/";
 
   let status: number | null = null;
+  let statusText: string | null = null;
+  let respHeaders: Record<string, string> | null = null;
   let bodyPreview: string | null = null;
   let error: string | null = null;
   let fetched = false;
@@ -43,6 +45,8 @@ export const wCap07: Probe = async ({ env, req, runId }) => {
   try {
     const resp = await mtls.fetch(target, { method: "GET" });
     status = resp.status;
+    statusText = resp.statusText;
+    respHeaders = Object.fromEntries(resp.headers);
     bodyPreview = (await resp.text()).slice(0, 1024);
     fetched = true;
   } catch (e) {
@@ -62,6 +66,8 @@ export const wCap07: Probe = async ({ env, req, runId }) => {
     details: {
       requested_target: target,
       http_status: status,
+      http_status_text: statusText,
+      response_headers: respHeaders,
       body_preview: bodyPreview,
       error,
       note: "An mTLS binding presents a client certificate the Worker never has to possess in cleartext — yet any code in the isolate can drive requests under that identity. Point ?target= at the mTLS-protected backend the cert was issued for to demonstrate authenticated reach.",
