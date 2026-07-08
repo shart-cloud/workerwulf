@@ -21,12 +21,15 @@ cd packages/harness && pnpm start run --test W-CAP-0X \
 > `1cf42136`). W-CAP-05 (Browser) confirmed `accessible` (fetched example.com,
 > HTTP 200). Raw results in `packages/harness/results/w-cap-0*-wave4*.json`.
 >
-> **Update (2026-07-07):** **W-CAP-07** (mTLS) now DEPLOY-VERIFIED `accessible`/`high`
-> — the `MTLS_FETCHER` binding is present and drivable by any isolate code (see the
-> W-CAP-07 section for the Cloudflare-egress caveat that blocks the *authenticated-reach*
-> half of the demo).
-> Still pending: **W-CAP-01** (Hyperdrive — waiting on CNPG Postgres backing) and
-> **W-CAP-03** (send_email — needs verified domain/address).
+> **Update (2026-07-08): all capability probes now DEPLOY-VERIFIED.**
+> - **W-CAP-07** (mTLS) → `accessible`/`high`; the `MTLS_FETCHER` binding is drivable by
+>   any isolate code (see the W-CAP-07 section for the Cloudflare-egress caveat that
+>   blocks the *authenticated-reach* half of the demo).
+> - **W-CAP-01** (Hyperdrive) → `accessible`/`critical`; exfil'd the canary from a private
+>   CNPG Postgres over a dedicated `wulf-vpc` Workers VPC tunnel — see
+>   `docs/wave2-hyperdrive.md`.
+> - **W-CAP-03** (send_email) → `accessible`/`high`; canary emailed via **Email Sending**
+>   (not Email Routing) — see `docs/wave3-capability-bindings.md`.
 
 ## W-CAP-09 — Workers AI (unmetered inference / financial DoS) — VERIFIED accessible/high
 

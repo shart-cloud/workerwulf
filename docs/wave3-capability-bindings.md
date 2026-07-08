@@ -40,23 +40,40 @@ Expected: `accessible`/`high` with `http_status`/`page_title`/`content_preview`
 populated. Point `?target=` at an internal/metadata endpoint to demonstrate SSRF
 reach. Uses `@cloudflare/puppeteer` (bundles cleanly under nodejs_compat).
 
-## W-CAP-03 — send_email (exfil/phishing channel) — IMPLEMENTED
+## W-CAP-03 — send_email (exfil/phishing channel) — DEPLOY-VERIFIED accessible/high (2026-07-08)
 
 A `send_email` binding turns a compromised Worker into a phishing/exfil channel.
 Built with the responsible posture: delivery is **pinned to one researcher-owned
-verified address** via the binding's `destination_address` (the platform enforces
-this), the payload is a **benign canary**, and no third party is targeted or spoofed.
+address** via the binding's `destination_address`, the payload is a **benign
+canary**, and no third party is targeted or spoofed.
+
+> ## ✅ VERIFIED — `accessible`/`high`, `sent: true`
+>
+> Sent `flag{w-cap-03-send-email-canary}` from `wulf@shart.cloud` →
+> `gore.jared@gmail.com` via `env.SEND_EMAIL.send()` on `wulf-worker`.
+>
+> **Wiring note — Email Sending, not Email Routing.** This account uses Cloudflare's
+> newer **Email Sending** product (the from-domain `shart.cloud` is onboarded via
+> `wrangler email sending enable`; check with `wrangler email sending list`). Email
+> **Routing** is *unconfigured* on the zone — but the `send_email` binding works
+> regardless, and the legacy `EmailMessage` (raw-MIME) API the probe uses is still
+> supported on the Email Sending binding, so **no probe code change was needed**. A
+> modern alternative is the object API: `env.SEND_EMAIL.send({ to, from: {email,
+> name}, subject, html, text })`. Sender restriction is now `allowed_sender_addresses`;
+> recipient restriction `allowed_destination_addresses` (or the singular
+> `destination_address` used here to pin delivery).
 
 ```bash
-# 1. Email Routing verified on your domain; destination address verified.
-# 2. Uncomment the [[send_email]] stanza in packages/worker/wrangler.toml and set
-#    destination_address to your verified address. Add to [vars]:
-#      WULF_EMAIL_FROM = "wulf@<your-verified-domain>"
-#      WULF_EMAIL_TO   = "<= destination_address>"
+# 1. from-domain onboarded to Email Sending: wrangler email sending enable shart.cloud
+#    (verify: wrangler email sending list). Email Routing is NOT required.
+# 2. Uncomment [[send_email]] in packages/worker/wrangler.toml, name=SEND_EMAIL,
+#    destination_address = the delivery target. Add to [vars]:
+#      WULF_EMAIL_FROM = "wulf@shart.cloud"     # onboarded domain
+#      WULF_EMAIL_TO   = "gore.jared@gmail.com" # = destination_address
 # 3. Deploy + run
 pnpm --filter @wulf/worker deploy
 cd packages/harness && pnpm start run --test W-CAP-03 --base-url https://wulf-worker.<subdomain>.workers.dev
 ```
-Expected: `accessible`/`high` with `sent: true`; a canary email
+Expected: `accessible`/`high` with `sent: true`; the canary email
 (`flag{w-cap-03-send-email-canary}`) arrives at the pinned address. If the vars
 aren't set, the probe returns `partial` without sending.

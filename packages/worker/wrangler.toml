@@ -58,9 +58,9 @@ binding = "BROWSER"
 # delivery to one verified researcher-owned address (the safeguard). Also set
 # WULF_EMAIL_FROM (verified domain) + WULF_EMAIL_TO (= destination_address) in
 # [vars]. See docs/wave3-capability-bindings.md.
-# [[send_email]]
-# name = "SEND_EMAIL"
-# destination_address = "you@yourdomain.example"
+[[send_email]]
+name = "SEND_EMAIL"
+destination_address = "gore.jared@gmail.com"   # pins delivery to the researcher's own inbox (safeguard)
 
 # --- Wave 4 capability-binding probes (see docs/wave4-capability-bindings.md) ---
 
@@ -101,5 +101,9 @@ binding = "AI"
 WULF_ENV_PROBE = "from-wrangler-toml"
 WULF_CALLBACK_HTTP_BASE = "http://callback.wulf.shart.cloud"
 WULF_DNS_EXFIL_ZONE = "x.wulf.shart.cloud"
+# W-CAP-03 (send_email). FROM on the Email-Sending-onboarded domain; TO pinned
+# to the binding's destination_address.
+WULF_EMAIL_FROM = "wulf@shart.cloud"
+WULF_EMAIL_TO = "gore.jared@gmail.com"
 
 # Real secrets go via `wrangler secret put` or .dev.vars (gitignored).
