@@ -1,12 +1,49 @@
 # Wave 2 — Hyperdrive capability probe (W-CAP-01) runbook
 
 Stands up a throwaway Postgres in the Talos cluster and routes Cloudflare
-Hyperdrive to it over **Workers VPC** (your existing `cloudflared` tunnel), so the
-**W-CAP-01** probe can demonstrate the Hyperdrive-binding blast radius.
+Hyperdrive to it over **Workers VPC** through a **dedicated `wulf-vpc` tunnel**, so
+the **W-CAP-01** probe can demonstrate the Hyperdrive-binding blast radius.
 
 ```
-Worker(env.HYPERDRIVE) → Hyperdrive → VPC Service → cloudflared → wulf-pg-rw:5432
+Worker(env.HYPERDRIVE) → Hyperdrive → VPC Service → cloudflared(wulf-vpc) → wulf-pg-rw:5432
 ```
+
+> ## ✅ DEPLOY-VERIFIED — `accessible`/`critical` (2026-07-08)
+>
+> W-CAP-01 exfiltrated `flag{w-cap-01-hyperdrive-canary}` end-to-end:
+> ```
+> Worker(env.HYPERDRIVE) → Hyperdrive ed30b8cf → VPC svc 019f3e90
+>   → wulf-vpc tunnel afb91b61 (WARP routing) → wulf-pg-rw 10.98.113.176:5432
+> ```
+> `binding_exposed` returned host/user/password off the binding, and `rows`
+> contained the canary. Run against `wulf-worker.sharted.workers.dev`.
+>
+> **Design note — dedicated tunnel (not the prod lab tunnel).** Rather than add
+> `warp-routing` to the shared `lab-gitops` tunnel (teleport/gophish/*.lab), a
+> throwaway **`wulf-vpc`** tunnel was created just for Workers VPC probes:
+> ```
+> cloudflared tunnel create wulf-vpc                       # id afb91b61-…
+> cloudflared tunnel route ip add 10.96.0.0/12 wulf-vpc    # whole service CIDR
+> ```
+> With WARP routing over the whole service CIDR, **any** in-cluster Service is
+> reachable to a Workers VPC service just by pointing `host.ipv4` at its ClusterIP
+> — no tunnel edit per backend. Connector manifests live in
+> `containers/talos-gitops/infrastructure/base/wulf-vpc/` (applied by `kubectl`,
+> kept out of Flux so it stays tunable). Set `TF_VAR_wulf_tunnel_id=afb91b61-…`.
+>
+> **Gotcha — GRANT on the canary tables.** CNPG runs `postInitApplicationSQL` as
+> the `postgres` superuser, so `wulf_canary`/`app_secrets` are owned by `postgres`
+> and the `wulf` app user (the connection identity) gets `permission denied`. After
+> the DB is up, grant read access — the probe returns `error` ("permission denied
+> for table wulf_canary") until you do:
+> ```bash
+> kubectl exec -n wulf-pg wulf-pg-1 -- psql -U postgres -d wulf \
+>   -c "GRANT SELECT ON wulf_canary, app_secrets TO wulf;"
+> ```
+>
+> **Token scopes.** The Terraform token (`infra/.envrc`) needs account-scope
+> **Hyperdrive: Edit** *and* **Workers VPC / connectivity: Edit** — the VPC
+> `connectivity/directory/services` create 403s without the latter.
 
 Everything below is applied by **you** — nothing here was deployed automatically.
 

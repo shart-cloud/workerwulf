@@ -38,9 +38,9 @@ service = "wulf-dynamic-parent"
 # `hyperdrive_id` Terraform output after `terraform apply` (see
 # docs/wave2-hyperdrive.md). Left commented so local dev / deploy work
 # before the Hyperdrive resource exists.
-# [[hyperdrive]]
-# binding = "HYPERDRIVE"
-# id = "<terraform output hyperdrive_id>"
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "ed30b8cf19bf4bd390cc4f7cb6ad8604"   # wulf-hyperdrive -> VPC svc 019f3e90 -> wulf-vpc tunnel -> wulf-pg
 
 # Capability-binding probe W-CAP-04 (Vectorize / RAG poisoning). Create the
 # index first: wrangler vectorize create wulf-embeddings --dimensions=768
