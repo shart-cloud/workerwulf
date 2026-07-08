@@ -14,6 +14,13 @@ import { wBnd05 } from "./w-bnd-05.js";
 import { wCache01 } from "./w-cache-01.js";
 import { wCache02 } from "./w-cache-02.js";
 import { wCache03 } from "./w-cache-03.js";
+import { wWc01 } from "./w-wc-01.js";
+import { wWc02 } from "./w-wc-02.js";
+import { wWc03 } from "./w-wc-03.js";
+import { wWc04 } from "./w-wc-04.js";
+import { wWc05 } from "./w-wc-05.js";
+import { wWc06 } from "./w-wc-06.js";
+import { wWc07 } from "./w-wc-07.js";
 import { wErr01 } from "./w-err-01.js";
 import { wErr02 } from "./w-err-02.js";
 import { wErr03 } from "./w-err-03.js";
@@ -88,6 +95,13 @@ export const probes: Record<string, Probe> = {
   "W-CACHE-01": wCache01,
   "W-CACHE-02": wCache02,
   "W-CACHE-03": wCache03,
+  "W-WC-01": wWc01,
+  "W-WC-02": wWc02,
+  "W-WC-03": wWc03,
+  "W-WC-04": wWc04,
+  "W-WC-05": wWc05,
+  "W-WC-06": wWc06,
+  "W-WC-07": wWc07,
   "W-ERR-01": wErr01,
   "W-ERR-02": wErr02,
   "W-ERR-03": wErr03,

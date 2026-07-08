@@ -2,6 +2,11 @@ import type { ProbeResult } from "@wulf/shared";
 import type { BrowserWorker } from "@cloudflare/puppeteer";
 import { probes } from "./probes/index.js";
 
+// Wave 5 — the deliberately-vulnerable *cached* entrypoint (W-WC-* probes). Named
+// export so it can be cached on its own via the Wrangler per-entrypoint `exports`
+// map while the default /probe/* router below stays uncached.
+export { WcVictim } from "./wc-victim.js";
+
 export interface Env {
   PREY_KV: KVNamespace;
   PREY_R2: R2Bucket;
@@ -9,6 +14,9 @@ export interface Env {
   PREY_D1: D1Database;
   SVC_SELF: Fetcher;
   SVC_RELAY: Fetcher;
+  // Wave 5 (W-WC-*) loopback to the cached WcVictim entrypoint. Optional: present
+  // only once the [[services]] stanza is uncommented + the worker redeployed.
+  SVC_WC_VICTIM?: Fetcher;
   // Capability bindings (W-CAP-*). Optional: present only once their stanzas
   // are wired + resources exist. Absent locally / pre-deploy.
   HYPERDRIVE?: Hyperdrive;
