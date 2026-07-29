@@ -1,11 +1,15 @@
 import type { ProbeResult } from "@wulf/shared";
 import type { BrowserWorker } from "@cloudflare/puppeteer";
 import { probes } from "./probes/index.js";
+import type { WcRegionDriver } from "./wc-region-driver.js";
 
 // Wave 5 — the deliberately-vulnerable *cached* entrypoint (W-WC-* probes). Named
 // export so it can be cached on its own via the Wrangler per-entrypoint `exports`
 // map while the default /probe/* router below stays uncached.
 export { WcVictim } from "./wc-victim.js";
+// Wave 5 — multi-region driver for the cross-PoP half of W-WC-06/07. A DO is the
+// only primitive that lets Worker code choose which data center it runs in.
+export { WcRegionDriver } from "./wc-region-driver.js";
 
 export interface Env {
   PREY_KV: KVNamespace;
@@ -17,6 +21,9 @@ export interface Env {
   // Wave 5 (W-WC-*) loopback to the cached WcVictim entrypoint. Optional: present
   // only once the [[services]] stanza is uncommented + the worker redeployed.
   SVC_WC_VICTIM?: Fetcher;
+  // Wave 5 cross-PoP driver namespace (W-WC-06/07). Optional for the same reason:
+  // present only once the DO stanza + migration are deployed.
+  WC_REGION?: DurableObjectNamespace<WcRegionDriver>;
   // Capability bindings (W-CAP-*). Optional: present only once their stanzas
   // are wired + resources exist. Absent locally / pre-deploy.
   HYPERDRIVE?: Hyperdrive;

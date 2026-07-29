@@ -147,10 +147,17 @@ export class WcVictim extends WorkerEntrypoint<Env> {
         // Deliberately NO cache-control → heuristic freshness.
         "last-modified": new Date(0).toUTCString(),
       };
+      // `?cookie=1` re-attaches the Set-Cookie the victim otherwise normalizes away
+      // (W-WC-05 arm C). Arm A proved this shape caches WITHOUT the header; if arm C
+      // also caches, the documented Set-Cookie auto-bypass gives per-user responses
+      // no protection at all. If arm C bypasses, the protection is real and it is the
+      // Worker's response-side strip that destroys it.
+      const withCookie = url.searchParams.get("cookie") === "1";
+      if (withCookie) headers["set-cookie"] = `wc_session=${caller}; Path=/; HttpOnly`;
       // A real gateway might attach Set-Cookie / forward Authorization here; the
       // victim "normalizes" them away, defeating the documented auto-bypass.
       return new Response(
-        JSON.stringify(envelope({ per_user_secret: sensitiveCanary(caller), caller, cache_control_present: false, autobypass_headers_stripped: true }), null, 2),
+        JSON.stringify(envelope({ per_user_secret: sensitiveCanary(caller), caller, cache_control_present: false, autobypass_headers_stripped: !withCookie, set_cookie_present: withCookie }), null, 2),
         { headers },
       );
     }

@@ -58,6 +58,19 @@ cross_version_cache = false    # never reuse cached entries across Worker versio
 type = "worker"
 cache = { enabled = true }     # cache this entrypoint's GET/HEAD responses
 
+# Multi-region driver for the cross-PoP half of W-WC-06/07. A Durable Object is the
+# only primitive that lets Worker code choose which data center it runs in
+# (`locationHint` at creation), so region-pinned objects drive SVC_WC_VICTIM against
+# different lower cache tiers. The object stores nothing — it exists only to be
+# somewhere — but a DO class still requires a migration to be defined.
+[[durable_objects.bindings]]
+name = "WC_REGION"
+class_name = "WcRegionDriver"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WcRegionDriver"]
+
 # Capability-binding probe W-CAP-01. Uncomment and set id to the
 # `hyperdrive_id` Terraform output after `terraform apply` (see
 # docs/wave2-hyperdrive.md). Left commented so local dev / deploy work
