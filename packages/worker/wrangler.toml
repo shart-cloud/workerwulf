@@ -38,24 +38,25 @@ service = "wulf-dynamic-parent"
 # Loopback self-binding to the deliberately-vulnerable cached WcVictim entrypoint.
 # Lets a probe in the default (uncached) /probe/* router drive attacker->victim
 # sequences through the edge cache — per the docs, a service-binding fetch to the
-# callee entrypoint consults that entrypoint's cache. Left commented so local dev /
-# deploy work before Wave 5 is wired; uncomment to deploy-verify W-WC-*.
-# [[services]]
-# binding = "SVC_WC_VICTIM"
-# service = "wulf-worker"
-# entrypoint = "WcVictim"
-#
+# callee entrypoint consults that entrypoint's cache.
+[[services]]
+binding = "SVC_WC_VICTIM"
+service = "wulf-worker"
+entrypoint = "WcVictim"
+
 # Enable Workers Cache on the WcVictim entrypoint ONLY so the /probe/* router stays
 # uncached and the 60+ existing Track-1 probes keep their determinism (threat-model
-# T4). Per-entrypoint control needs Wrangler >= 4.107 (installed: 4.108). VERIFY the
-# exact key names against the deployed CLI before relying on them.
-# [cache]
-# enabled = false            # default entrypoint (the router) is NOT cached
-#
-# [[exports]]
-# name = "WcVictim"
-# [exports.cache]
-# enabled = true             # cache this entrypoint's GET/HEAD responses
+# T4). Syntax verified against wrangler 4.108.0's config-schema.json: `cache` is a
+# top-level table requiring `enabled`; `exports` is a MAP keyed by export name whose
+# WorkerEntrypointExport entries require `type = "worker"` (it is NOT an
+# `[[exports]]` array with a `name` key).
+[cache]
+enabled = false                # default entrypoint (the /probe/* router) is NOT cached
+cross_version_cache = false    # never reuse cached entries across Worker versions
+
+[exports.WcVictim]
+type = "worker"
+cache = { enabled = true }     # cache this entrypoint's GET/HEAD responses
 
 # Capability-binding probe W-CAP-01. Uncomment and set id to the
 # `hyperdrive_id` Terraform output after `terraform apply` (see

@@ -206,19 +206,62 @@ cd packages/harness && pnpm start run --track worker --test W-WC-0X \
   --base-url https://wulf-worker.sharted.workers.dev
 ```
 
-Deploy-verify status: **implemented, pending deploy** (2026-07-08). All seven
-probes (`W-WC-01…07`) + the `WcVictim` entrypoint are written, typecheck clean, and
-locally return `blocked` with the correct deploy-verify message (the loopback
-binding is intentionally unwired locally). Not yet deployed. Raw results will land
-in `packages/harness/results/w-wc-0*-wave5*.json`.
+Deploy-verify status: **DEPLOY-VERIFIED 2026-07-29** (version
+`4fd485f8-98ae-44ff-8cb7-d9a9499dcc30`). All seven probes ran live against
+`wulf-worker.sharted.workers.dev`.
+
+| Probe | Result | Severity | Evidence |
+|---|---|---|---|
+| W-WC-01 introspection | accessible | informational | `MISS`→`HIT`, identical nonce — cache live on `WcVictim`, router uncached |
+| W-WC-02 purge DoS | accessible | high | `purgeEverything` from unprivileged isolate code evicted the entrypoint cache (`MISS` + fresh nonce after propagation) |
+| W-WC-03 unkeyed poisoning | accessible | high | Victim received the attacker's `flag{}` despite sending its own header value |
+| W-WC-04 cross-caller leak | **accessible** | **critical** | Caller `bob` received `flag{w-wc-04-secret-for-alice}` — identity header is not part of the cache key |
+| W-WC-05 accidental caching | accessible | high | Heuristic freshness cached a per-user secret and replayed it to a second caller |
+| W-WC-06 tiered amplification | partial | medium | Single-PoP served without re-invoking the Worker; cross-PoP still deferred |
+| W-WC-07 request collapsing | accessible | medium | 8 concurrent requests → 1 execution; collapse doubles as an in-flight oracle |
+
+### Resolved open items
+
+- **Wrangler syntax — RESOLVED.** Verified against `wrangler@4.108.0`'s
+  `config-schema.json`. The syntax originally sketched here was wrong: `exports` is
+  a **map keyed by export name**, and each entry **requires `type = "worker"`** — it
+  is *not* an `[[exports]]` array with a `name` key. Correct form now in
+  `wrangler.toml`; direction is enable-only-victim (top-level `enabled = false`,
+  `[exports.WcVictim] cache.enabled = true`), plus `cross_version_cache = false`.
+- **`purgeEverything` scope — RESOLVED, safe.** Per the docs, purges are "scoped to
+  the Worker that owns the cache" and "further scoped to the entrypoint that called
+  `purge()`"; "no zone-level purge … affects Workers Caching content." The
+  `shart.cloud` zone cache is unreachable from W-WC-02. **Caveat:** purges share
+  "the same rate-limiting system as Cloudflare's zone purge API", so W-WC-02 must
+  not be loop-tested — a flood could starve legitimate zone purges.
+
+### Corrections made during deploy-verify
+
+- **W-WC-02 oracle was racy.** The post-purge re-read raced purge propagation and
+  always reported `evicted: false` → `partial`. Confirmed the purge was real by
+  re-running with a fixed `run_id` 25s apart (same key returned a fresh nonce), then
+  added a 10s `PURGE_PROPAGATION_MS` wait before the re-read. Now `accessible`.
+  The wait is not a measurement — no verdict derives from elapsed time — so the
+  nonce oracle stays host-clock-independent.
+- **W-WC-05 conflated two mechanisms.** It sent `Authorization` while trying to
+  measure heuristic freshness; the edge decides that auto-bypass on the **inbound
+  request**, so the response came back `BYPASS` and the heuristic half was never
+  exercised (probe read `blocked`). Split into arm A (no `Authorization`, the
+  heuristic test → `accessible`/high) and arm B (with it, as a control).
+- **New defensive result from arm B:** the `Authorization` auto-bypass **held** even
+  though the Worker stripped the header from the *response*. The bypass is decided
+  inbound and **cannot be defeated by response-side normalization** — so the
+  "defeated auto-bypass" half of the original W-WC-05 thesis is **refuted** for
+  `Authorization`. Forwarding it is safe-by-default. (The `Set-Cookie` response-side
+  half remains untested.)
+- `/wc/sensitive` was emitting `flag{w-wc-04-…}`; now emits `flag{w-wc-05-…}`.
 
 ## Open items
 
-- Confirm the exact `[cache]` / per-entrypoint `exports` syntax against the deployed
-  Wrangler 4.107 (`enabled` default direction: enable-globally-then-disable-router vs
-  enable-only-victim).
 - `W-WC-06/07` cross-PoP: stand up an external multi-region driver (curl from ≥2
   Cloudflare regions, or a scheduled multi-colo probe) to capture the amplification
-  half, mirroring the deferred W-CAP-07 textbook-mTLS proof.
-- Verify `purgeEverything` is truly entrypoint-scoped (not zone-wide) before running
-  `W-WC-02` against the live deployment.
+  half, mirroring the deferred W-CAP-07 textbook-mTLS proof. **Only remaining gap.**
+- `W-WC-05` `Set-Cookie` half: arm B refuted the `Authorization` side of the
+  defeated-auto-bypass thesis; the response-side `Set-Cookie` strip is still
+  untested and may behave differently (it *is* response-side, so a Worker plausibly
+  can defeat it).

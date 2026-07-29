@@ -33,6 +33,16 @@ export async function wcFetch(
   }
 }
 
+/**
+ * Wall-clock delay used ONLY to let an edge-side control-plane change (a cache
+ * purge) propagate before re-reading. This is deliberately not a measurement: no
+ * verdict is derived from how long it took, so it does not reintroduce the
+ * host-clock dependency the nonce oracle exists to avoid. Deploy-only paths.
+ */
+export function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /** Pull a field from a WcFetch JSON body, or undefined if the body is not an object. */
 export function field(r: WcFetch, name: string): unknown {
   return r.body && typeof r.body === "object" ? (r.body as Record<string, unknown>)[name] : undefined;
