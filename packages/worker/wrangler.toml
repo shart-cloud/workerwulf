@@ -44,6 +44,16 @@ binding = "SVC_WC_VICTIM"
 service = "wulf-worker"
 entrypoint = "WcVictim"
 
+# --- Wave 6: Cloudflare Containers exec() — W-CTR-* probes (docs/wave6-containers-exec.md) ---
+# Service binding to the wulf-container Worker (packages/container), which owns the
+# CtrTarget container Durable Object and exposes ctx.container.exec() over POST
+# /ctr/<op>. Deploy wulf-container FIRST — a service binding to a Worker that does not
+# exist yet fails the deploy. Until then the probes report `blocked`, exactly like the
+# W-CAP-* stanzas below.
+[[services]]
+binding = "SVC_CTR"
+service = "wulf-container"
+
 # Enable Workers Cache on the WcVictim entrypoint ONLY so the /probe/* router stays
 # uncached and the 60+ existing Track-1 probes keep their determinism (threat-model
 # T4). Syntax verified against wrangler 4.108.0's config-schema.json: `cache` is a

@@ -24,6 +24,16 @@ export interface Env {
   // Wave 5 cross-PoP driver namespace (W-WC-06/07). Optional for the same reason:
   // present only once the DO stanza + migration are deployed.
   WC_REGION?: DurableObjectNamespace<WcRegionDriver>;
+  // Wave 6 (W-CTR-*) — the wulf-container Worker, which wraps a container DO and
+  // exposes ctx.container.exec() over a JSON-RPC surface. Optional: present only once
+  // wulf-container is deployed and the [[services]] stanza is wired. `wrangler dev`
+  // has no container runtime, so the whole family is deploy-only.
+  SVC_CTR?: Fetcher;
+  // Shared secret gating wulf-container's RPC surface. That Worker exposes an arbitrary
+  // `sh -c` sink, so it is gated in code rather than by routing alone; both Workers hold
+  // the same secret (`wrangler secret put WULF_CTR_AUTH`). Without it the W-CTR probes
+  // report `blocked` rather than failing mid-run.
+  WULF_CTR_AUTH?: string;
   // Capability bindings (W-CAP-*). Optional: present only once their stanzas
   // are wired + resources exist. Absent locally / pre-deploy.
   HYPERDRIVE?: Hyperdrive;
