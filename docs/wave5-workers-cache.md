@@ -206,19 +206,111 @@ cd packages/harness && pnpm start run --track worker --test W-WC-0X \
   --base-url https://wulf-worker.sharted.workers.dev
 ```
 
-Deploy-verify status: **implemented, pending deploy** (2026-07-08). All seven
-probes (`W-WC-01…07`) + the `WcVictim` entrypoint are written, typecheck clean, and
-locally return `blocked` with the correct deploy-verify message (the loopback
-binding is intentionally unwired locally). Not yet deployed. Raw results will land
-in `packages/harness/results/w-wc-0*-wave5*.json`.
+Deploy-verify status: **DEPLOY-VERIFIED 2026-07-29** (version
+`4fd485f8-98ae-44ff-8cb7-d9a9499dcc30`). All seven probes ran live against
+`wulf-worker.sharted.workers.dev`.
+
+| Probe | Result | Severity | Evidence |
+|---|---|---|---|
+| W-WC-01 introspection | accessible | informational | `MISS`→`HIT`, identical nonce — cache live on `WcVictim`, router uncached |
+| W-WC-02 purge DoS | accessible | high | `purgeEverything` from unprivileged isolate code evicted the entrypoint cache (`MISS` + fresh nonce after propagation) |
+| W-WC-03 unkeyed poisoning | accessible | high | Victim received the attacker's `flag{}` despite sending its own header value |
+| W-WC-04 cross-caller leak | **accessible** | **critical** | Caller `bob` received `flag{w-wc-04-secret-for-alice}` — identity header is not part of the cache key |
+| W-WC-05 accidental caching | accessible | high | Heuristic freshness cached a per-user secret and replayed it to a second caller |
+| W-WC-06 tiered amplification | partial | medium | Single-PoP served without re-invoking the Worker; cross-PoP amplification **refuted** (per-colo entries) |
+| W-WC-07 request collapsing | accessible | medium | 8 concurrent requests → 1 execution; collapse doubles as an in-flight oracle; scope **bounded to one colo** |
+
+The cross-PoP arms were added after the initial sweep and re-verified on version
+`bd8f2395-a5a3-4cd1-9997-1cd1e67fe0b2` (raw: `packages/harness/results/w-wc-0*-wave5-xpop-bd8f2395.json`).
+
+### Resolved open items
+
+- **Wrangler syntax — RESOLVED.** Verified against `wrangler@4.108.0`'s
+  `config-schema.json`. The syntax originally sketched here was wrong: `exports` is
+  a **map keyed by export name**, and each entry **requires `type = "worker"`** — it
+  is *not* an `[[exports]]` array with a `name` key. Correct form now in
+  `wrangler.toml`; direction is enable-only-victim (top-level `enabled = false`,
+  `[exports.WcVictim] cache.enabled = true`), plus `cross_version_cache = false`.
+- **`purgeEverything` scope — RESOLVED, safe.** Per the docs, purges are "scoped to
+  the Worker that owns the cache" and "further scoped to the entrypoint that called
+  `purge()`"; "no zone-level purge … affects Workers Caching content." The
+  `shart.cloud` zone cache is unreachable from W-WC-02. **Caveat:** purges share
+  "the same rate-limiting system as Cloudflare's zone purge API", so W-WC-02 must
+  not be loop-tested — a flood could starve legitimate zone purges.
+
+### Corrections made during deploy-verify
+
+- **W-WC-02 oracle was racy.** The post-purge re-read raced purge propagation and
+  always reported `evicted: false` → `partial`. Confirmed the purge was real by
+  re-running with a fixed `run_id` 25s apart (same key returned a fresh nonce), then
+  added a 10s `PURGE_PROPAGATION_MS` wait before the re-read. Now `accessible`.
+  The wait is not a measurement — no verdict derives from elapsed time — so the
+  nonce oracle stays host-clock-independent.
+- **W-WC-05 conflated two mechanisms.** It sent `Authorization` while trying to
+  measure heuristic freshness; the edge decides that auto-bypass on the **inbound
+  request**, so the response came back `BYPASS` and the heuristic half was never
+  exercised (probe read `blocked`). Split into arm A (no `Authorization`, the
+  heuristic test → `accessible`/high) and arm B (with it, as a control).
+- **New defensive result from arm B:** the `Authorization` auto-bypass **held** even
+  though the Worker stripped the header from the *response*. The bypass is decided
+  inbound and **cannot be defeated by response-side normalization** — so the
+  "defeated auto-bypass" half of the original W-WC-05 thesis is **refuted** for
+  `Authorization`. Forwarding it is safe-by-default.
+- `/wc/sensitive` was emitting `flag{w-wc-04-…}`; now emits `flag{w-wc-05-…}`.
+
+## Closed open items (2026-07-29, version `bd8f2395`)
+
+### The cross-PoP driver — `WcRegionDriver`
+
+The cross-PoP half never needed an *external* driver. A Durable Object is the only
+primitive that lets Worker code choose where it runs: `locationHint` pins a
+newly-created object to a region, and a service-binding fetch issued from inside that
+object dispatches in the object's own data center. `packages/worker/src/wc-region-driver.ts`
+drives `SVC_WC_VICTIM` from objects pinned to `wnam` / `weur` / `apac`, and every
+result carries the colo it actually ran in (read back from `/cdn-cgi/trace`) — hints
+are best-effort, so a conclusion is only drawn from **confirmed-different** colos.
+Observed placements across runs: DFW/AMS/KIX, DEN/MRS/SIN, LAX/CDG/HKG, SJC/LIS.
+
+The object stores nothing; it exists only to be somewhere. A DO class still needs a
+migration, hence `[[migrations]] tag = "v1"` in `wrangler.toml` — the first migration
+on `wulf-worker`.
+
+### W-WC-06 cross-PoP amplification — **REFUTED** (defensive result)
+
+Remote colos did not serve the origin's `invocation_nonce`. Crucially they did not
+merely miss: on a re-read 15s later each remote colo returned the nonce **it had
+created itself**, as a `HIT`. Every data center holds its own entry for the same key,
+which excludes propagation lag as the explanation — the failure mode a single-pass
+probe could not have ruled out. Confirmed manually first (same `run_id` re-driven 45s
+apart: DEN/MRS/SIN each `HIT` their own nonce), then encoded as the probe's own
+`per-colo` verdict so it no longer rests on a hand-run.
+
+This **bounds** rather than extends blast radius, and it downgrades the practical
+reach of W-WC-03: a poisoned entry does not go global for free — an attacker must land
+the poisoning in each data center whose traffic they want to affect. Scope of the
+refutation: this account's cache configuration, `workers.dev`, this response shape.
+The arm is kept as a regression: if Cloudflare's tiering behavior changes it flips to
+`confirmed` and severity rises with it.
+
+### W-WC-07 collapsing scope — **BOUNDED to one data center** (defensive result)
+
+Simultaneous 8-way bursts from two confirmed-different colos (SJC, LIS) produced
+disjoint nonce sets — 1 execution each, no shared execution. Victim-joining is
+PoP-local, so the primitive is capped at one data center's concurrent traffic rather
+than the network's.
+
+### W-WC-05 `Set-Cookie` half — thesis **HOLDS** for `Set-Cookie`
+
+Arm C re-attaches `Set-Cookie` to the response shape arm A already proved cacheable
+(`?cookie=1` on `/wc/sensitive`), which is the only way to attribute a bypass to the
+header rather than to the shape. Result: `BYPASS`, and the second caller received
+their own secret. So the `Set-Cookie` auto-bypass is **real**, and it is the Worker's
+response-side strip that destroys it — the original "defeated auto-bypass" thesis
+holds here even though arm B refuted it for `Authorization`. The two halves of that
+thesis have opposite answers: `Authorization` is decided inbound and cannot be
+defeated response-side; `Set-Cookie` is response-side and a normalizing gateway
+removes the protection. **Do not normalize `Set-Cookie` off per-user responses.**
 
 ## Open items
 
-- Confirm the exact `[cache]` / per-entrypoint `exports` syntax against the deployed
-  Wrangler 4.107 (`enabled` default direction: enable-globally-then-disable-router vs
-  enable-only-victim).
-- `W-WC-06/07` cross-PoP: stand up an external multi-region driver (curl from ≥2
-  Cloudflare regions, or a scheduled multi-colo probe) to capture the amplification
-  half, mirroring the deferred W-CAP-07 textbook-mTLS proof.
-- Verify `purgeEverything` is truly entrypoint-scoped (not zone-wide) before running
-  `W-WC-02` against the live deployment.
+None. Wave 5 is complete.

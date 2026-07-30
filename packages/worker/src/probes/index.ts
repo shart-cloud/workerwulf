@@ -21,6 +21,17 @@ import { wWc04 } from "./w-wc-04.js";
 import { wWc05 } from "./w-wc-05.js";
 import { wWc06 } from "./w-wc-06.js";
 import { wWc07 } from "./w-wc-07.js";
+import { wCtr01 } from "./w-ctr-01.js";
+import { wCtr02 } from "./w-ctr-02.js";
+import { wCtr03 } from "./w-ctr-03.js";
+import { wCtr04 } from "./w-ctr-04.js";
+import { wCtr05 } from "./w-ctr-05.js";
+import { wCtr06 } from "./w-ctr-06.js";
+import { wCtr07 } from "./w-ctr-07.js";
+import { wCtr08 } from "./w-ctr-08.js";
+import { wCtr09 } from "./w-ctr-09.js";
+import { wCtr10 } from "./w-ctr-10.js";
+import { wCtr11 } from "./w-ctr-11.js";
 import { wErr01 } from "./w-err-01.js";
 import { wErr02 } from "./w-err-02.js";
 import { wErr03 } from "./w-err-03.js";
@@ -102,6 +113,17 @@ export const probes: Record<string, Probe> = {
   "W-WC-05": wWc05,
   "W-WC-06": wWc06,
   "W-WC-07": wWc07,
+  "W-CTR-01": wCtr01,
+  "W-CTR-02": wCtr02,
+  "W-CTR-03": wCtr03,
+  "W-CTR-04": wCtr04,
+  "W-CTR-05": wCtr05,
+  "W-CTR-06": wCtr06,
+  "W-CTR-07": wCtr07,
+  "W-CTR-08": wCtr08,
+  "W-CTR-09": wCtr09,
+  "W-CTR-10": wCtr10,
+  "W-CTR-11": wCtr11,
   "W-ERR-01": wErr01,
   "W-ERR-02": wErr02,
   "W-ERR-03": wErr03,

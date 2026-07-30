@@ -1,0 +1,63 @@
+name = "wulf-container"
+main = "src/index.ts"
+account_id = "11caecd272df7dbdcc636034c25b1f1c"
+compatibility_date = "2026-05-01"
+compatibility_flags = ["nodejs_compat"]
+
+# CRITICAL: this Worker is a deliberately-vulnerable exec surface — POST /ctr/exec_shell
+# runs an arbitrary `sh -c` string in the container. It must be reachable ONLY through
+# the SVC_CTR service binding from wulf-worker, never from the internet. Both default to
+# enabled if omitted, so they are set explicitly.
+workers_dev = false
+preview_urls = false
+
+# --- Wave 6: Cloudflare Containers exec() — W-CTR-* probes (docs/wave6-containers-exec.md) ---
+#
+# This Worker is the deliberately-vulnerable *target* for the W-CTR probe family, in
+# the same spirit as the WcVictim entrypoint in packages/worker (Wave 5). It exposes a
+# thin JSON-RPC surface over `ctx.container` so a probe running in wulf-worker can
+# drive real `exec()` calls: caller-chosen argv, caller-chosen `sh -c` strings,
+# caller-chosen env/user/cwd, and a raw request body streamed straight to stdin.
+#
+# Every operation is bounded (hard exec timeout + kill, capped output, capped payload)
+# and targets only the researcher's own account. See the Safety rails section of the
+# Wave 6 doc.
+
+[[containers]]
+class_name = "CtrTarget"
+# Build: docker build -t wulf-container:v1 ./container
+# Push:  wrangler containers push registry.cloudflare.com/<acct>/wulf-container:v1
+image = "registry.cloudflare.com/11caecd272df7dbdcc636034c25b1f1c/wulf-container:v1"
+# `basic` (1/4 vCPU, 1 GiB RAM) — ffmpeg's stdin->webp transcode in W-CTR-03 is the
+# heaviest thing this image does and it OOMs on `dev` (256 MiB). Bump to standard-1
+# only if a probe reports an ffmpeg OOM.
+instance_type = "basic"
+max_instances = 2
+
+[[durable_objects.bindings]]
+name = "CTR_TARGET"
+class_name = "CtrTarget"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["CtrTarget"]
+
+# W-CTR-10: the Fetcher that `interceptOutboundHttp/Https/Tcp()` redirects the
+# container's egress into. A loopback service binding to this same Worker's
+# InterceptSink entrypoint — the sink answers with a canary body, so a container
+# process whose curl prints that canary proves its "direct" egress was rerouted.
+[[services]]
+binding = "INTERCEPT_SINK"
+service = "wulf-container"
+entrypoint = "InterceptSink"
+
+[vars]
+# Plain var (not a secret) — W-CTR-04 checks whether Worker-level configuration
+# reaches an exec'd process's environment and whether a caller-supplied `env` option
+# can override it. Benign canary, never real account data.
+WULF_CTR_VAR = "flag{w-ctr-04-worker-var}"
+
+# W-CTR-04 also wants a real *secret* (Worker secrets are handled differently from
+# vars). Set it out of band, it is deliberately not in this file:
+#   cd packages/container && wrangler secret put WULF_CTR_SECRET
+#   (value: flag{w-ctr-04-worker-secret})

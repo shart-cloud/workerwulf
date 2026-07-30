@@ -29,6 +29,7 @@ The monorepo lives at `/home/jg/git/shart-cloud-gh/workerwulf` and uses pnpm wor
 | `@wulf/codeshield` | `packages/codeshield/` | Standalone CodeShield container. Image built and pushed but NOT deployed as a separate Worker — consolidated into LlamaFirewall. |
 | `@wulf/harness` | `packages/harness/` | CLI test harness. Runs probes, collects results to `packages/harness/results/`. |
 | `@wulf/shared` | `packages/shared/` | Shared types (`ProbeResult`, `Track`, etc.). |
+| `@wulf/container` | `packages/container/` | **Wave 6 target.** Worker owning the `CtrTarget` container Durable Object — a deliberately-vulnerable JSON-RPC surface over `ctx.container.exec()` (caller-chosen argv, `sh -c` interpolation, request body streamed to stdin, snapshots, egress interception). Driven by the `W-CTR-01…11` probes in `packages/worker` over the `SVC_CTR` service binding. Deploy-only. See `docs/wave6-containers-exec.md`. |
 | Other packages | `packages/worker/`, `packages/durable/`, `packages/dynamic-parent/`, `packages/callbackd/` | Track 1–3 introspection workers, callback server, etc. |
 
 ## Current State

@@ -1,6 +1,12 @@
 import type { Probe } from "./index.js";
 import { base } from "./_helpers.js";
-import { wcFetch, field, servedFromCache } from "./_wc.js";
+import { wcFetch, field, servedFromCache, wait } from "./_wc.js";
+
+// Purge is an edge control-plane operation; an immediate re-read races its
+// propagation and reports a false "not evicted". Measured 2026-07-29 against the
+// live deployment: a same-key re-read ~25s after purge returned a fresh
+// invocation nonce (real re-execution), while the immediate re-read still hit.
+const PURGE_PROPAGATION_MS = 10_000;
 
 const COMPARISON = {
   aws_lambda: "partial analog — CloudFront CreateInvalidation exists but is a control-plane IAM action, not callable by ordinary function code with no per-call authz",
@@ -55,8 +61,10 @@ export const wWc02: Probe = async ({ env, runId }) => {
   const purgeAvailable = field(purge, "purge_available") === true;
   const purgeSucceeded = field(purge, "purge_succeeded") === true;
 
-  // 3. Re-fetch the same key: a fresh nonce (MISS) proves eviction. A repeated
-  // nonce is inconclusive — global purge propagation can lag the immediate re-read.
+  // 3. Re-fetch the same key: a fresh nonce (MISS) proves eviction. Wait for purge
+  // propagation first — an immediate re-read races the control plane and reports a
+  // false "not evicted".
+  await wait(PURGE_PROPAGATION_MS);
   const after = await wcFetch(victim, key);
   const afterNonce = field(after, "invocation_nonce");
   const evicted = typeof afterNonce === "string" && afterNonce !== seedNonce;
@@ -85,7 +93,7 @@ export const wWc02: Probe = async ({ env, runId }) => {
       after_purge_cache_status: after.cache_status,
       note: evicted
         ? "Unprivileged isolate code evicted the entire entrypoint cache; every subsequent request now re-invokes the Worker/origin (load amplification). Repeatable to exhaust the plan's shared purge rate-limit, blocking legitimate eviction of poisoned content."
-        : "Purge issued; immediate re-read did not show a MISS — likely global-purge propagation lag rather than a failed purge. Re-run W-WC-02 with --sequential/--interval to confirm eviction after propagation.",
+        : `Purge reported success but the key still hit after a ${PURGE_PROPAGATION_MS}ms propagation wait — propagation is slower than the wait, or this key was re-filled by a concurrent request. Not evidence that purge failed; cross-check by re-running with the same run_id and comparing seed_nonce across runs.`,
     },
     comparison: COMPARISON,
   });
