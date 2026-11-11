@@ -30,6 +30,31 @@ importers:
         specifier: ^4.94.0
         version: 4.94.0(@cloudflare/workers-types@4.20260521.1)
 
+  packages/analyze-poc:
+    dependencies:
+      '@oxc-parser/wasm':
+        specifier: 0.40.1
+        version: 0.40.1
+    devDependencies:
+      '@cloudflare/workers-types':
+        specifier: ^4.20250101.0
+        version: 4.20260521.1
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.19
+      '@wulf/cli':
+        specifier: workspace:*
+        version: link:../cli
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+      vitest:
+        specifier: ^2.1.0
+        version: 2.1.9(@types/node@22.19.19)
+      wrangler:
+        specifier: 4.108.0
+        version: 4.108.0(@cloudflare/workers-types@4.20260521.1)
+
   packages/cli:
     dependencies:
       commander:
@@ -1208,6 +1233,10 @@ packages:
     resolution: {integrity: sha512-uuPSt7vYjIw8p8Kdc5I+7bqPRF1WFzu6Pk3zrSM98FjV9COsyKXY6Er6qQ8nfU37TC/Hlyc3FB+qxTFzqZkuwg==}
     cpu: [x64]
     os: [win32]
+
+  '@oxc-parser/wasm@0.40.1':
+    resolution: {integrity: sha512-rMGNFxWQdnLe+MIe2/iDPFyZwVcJ4fLmLZK6px1pWCI+dlWXxLW9vDZqvHEaEgvdCZxOzSzW3mH+E6hyhZg7nA==}
+    deprecated: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
 
   '@oxc-project/types@0.40.1':
     resolution: {integrity: sha512-jhJXVcly+LREGeLskOt76bxPTxkF4RV7xDDGBO+H1CwK5grjMBWLlNnicI+ljSq3PkZEEU6dQrES9HMsRuk2HA==}
@@ -2769,6 +2798,10 @@ snapshots:
 
   '@oxc-parser/binding-win32-x64-msvc@0.40.1':
     optional: true
+
+  '@oxc-parser/wasm@0.40.1':
+    dependencies:
+      '@oxc-project/types': 0.40.1
 
   '@oxc-project/types@0.40.1': {}
 

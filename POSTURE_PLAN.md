@@ -238,6 +238,14 @@ Each slice ends with the repo green (`pnpm -r typecheck`, all tests) and the CLI
 - Split Node-only code (fs and path in `parsers/wrangler.ts`, `report/*`, the `_utils` file reads) away from the pure rule and AST code. Move the pure parts to `@wulf/analyze`.
 - Prove that oxc-parser runs in a Worker (`oxc-parser` WASM build, or `@oxc-parser/wasm`), with a bundle-size budget of 3 MB gzipped for the analyzer Worker. If that fails, fall back to the codeshield container for AST analysis.
 - **Exit:** a `wrangler dev` test Worker runs every account and source rule against a fixture snapshot, and its output matches the CLI byte for byte.
+- **Parser proof of concept (2026-11-10): passed.** See `packages/analyze-poc/README.md`.
+  - **How it works:** a wrangler `alias` swaps `oxc-parser` for a shim over `@oxc-parser/wasm@0.40.1`, the WASM build at the same version as the CLI's native parser. The CLI's parser, rules and report code run in workerd **unchanged**. The only CLI change is `parseWranglerText` split out of `parseWrangler`.
+  - **Findings:** for all 7 CLI fixtures, the Worker's output under `wrangler dev` deep-equals `wulf audit --source --json`. That's 66 reference findings. The 5 supply-chain (`WF-SC-*`) findings are excluded because they read Dockerfile and package.json from disk; a Worker needs those passed in as files.
+  - **AST:** identical between WASM and native across 272 files (1.5 MB: every package's source plus Effect's bundles), and over HTTP from workerd for every fixture source. The one exception is a label: the WASM build marks JavaScript `sourceType.variant` as `"jsx"`. Parse errors and every node are otherwise identical, and no rule reads that field.
+  - **Size:** 347 KiB gzipped in total (WASM 275 KiB, JS 77 KiB), against the 3 MB budget.
+  - **CPU:** WASM is 2.5–3× slower than native, about 55–62 ms for a 150–350 KB bundle in Node, with source files near 0 ms. A 356 KB bundle takes about 200 ms round trip in `wrangler dev`. That's fine on Workers Paid and in Workflow steps, but **large bundles exceed the Free plan's 10 ms CPU limit**.
+  - **Dependency risk:** npm marks `@oxc-parser/wasm` as no longer supported. Current `oxc-parser` (0.158) has an official `oxc-parser/workerd` entry, but its AST appears to be ESTree-shaped, unlike 0.40's native shape (e.g. `StaticMemberExpression`) that the rules match on. Moving to it means adapting the AST helpers in `src/ast`, and the equivalence tests here are the safety net for that.
+  - **Still to do for the slice:** move the pure code into `@wulf/analyze`. Have supply-chain rules take file text instead of reading disk. Run the account rules in workerd as well (the POC covers config and source rules). Put `analyze-poc`'s equivalence tests in CI.
 
 ### Slice 3: ScanHub and ScanWorkflow
 

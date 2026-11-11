@@ -94,7 +94,14 @@ function stripJsonComments(text: string): string {
 
 /** Parse a wrangler.toml / wrangler.json / wrangler.jsonc file from disk. */
 export function parseWrangler(path: string): ParsedWrangler {
-  const text = readFileSync(path, "utf8");
+  return parseWranglerText(path, readFileSync(path, "utf8"));
+}
+
+/**
+ * Parse wrangler config text. No filesystem access, so it also runs in a Worker.
+ * The format follows the path's extension: `.toml`, otherwise JSON/JSONC.
+ */
+export function parseWranglerText(path: string, text: string): ParsedWrangler {
   if (path.endsWith(".toml")) {
     return { config: parseToml(text) as WranglerConfig, format: "toml", path };
   }
