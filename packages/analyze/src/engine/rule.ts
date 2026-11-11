@@ -10,7 +10,7 @@ import type { WranglerConfig } from "../parsers/wrangler.js";
 // platform hub and the research harness.
 export { SEVERITY_ORDER, type Evidence, type Finding, type Severity } from "@wulf/core";
 
-interface RuleBase {
+export interface RuleBase {
   id: string;
   title: string;
   severity: Severity;
@@ -130,7 +130,8 @@ export interface RuleSummary {
   severity: Severity;
   probe: string;
   family: string;
-  surface: "config" | "source" | "account";
+  /** "probe" rules (network DAST) live in the CLI, which adds them to its summaries. */
+  surface: "config" | "source" | "account" | "probe";
 }
 
 /** Flat summary of every registered rule, for the coverage matrix. */

@@ -13,7 +13,7 @@ export const SEVERITY_ORDER: Record<Severity, number> = {
 };
 
 export const Evidence = Schema.Struct({
-  type: Schema.Literals(["config", "source", "binding", "api"]),
+  type: Schema.Literals(["config", "source", "binding", "api", "http"]),
   label: Schema.String,
   /** Short inline text payload. */
   inline: Schema.optionalKey(Schema.String),

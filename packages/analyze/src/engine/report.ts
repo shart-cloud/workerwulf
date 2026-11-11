@@ -4,7 +4,7 @@ import type { Finding } from "./rule.js";
 import { countBySeverity, sortFindings, type SeverityCounts } from "./runner.js";
 
 export interface FindingGroup {
-  kind: "config" | "source" | "account";
+  kind: "config" | "source" | "account" | "probe";
   /** What the findings pertain to: "wrangler.toml", "src/index.ts", "script:foo". */
   source: string;
   findings: Finding[];
