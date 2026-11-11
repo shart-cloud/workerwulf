@@ -2,6 +2,8 @@ import type { BindingMap } from "../ast/binding-map.js";
 import type { SourceFile } from "../ast/parse.js";
 import type { DeclaredBinding } from "../parsers/bindings.js";
 import type { WranglerConfig } from "../parsers/wrangler.js";
+import type { Fingerprint } from "../dast/fingerprint.js";
+import type { ProbeHttp } from "../dast/http.js";
 
 export type Severity = "critical" | "high" | "medium" | "low" | "informational";
 
@@ -14,7 +16,7 @@ export const SEVERITY_ORDER: Record<Severity, number> = {
 };
 
 export interface Evidence {
-  type: "config" | "source" | "binding" | "api";
+  type: "config" | "source" | "binding" | "api" | "http";
   label: string;
   /** Short inline text payload. */
   inline?: string;
@@ -100,6 +102,22 @@ export interface AccountContext {
   localSources?: Map<string, SourceFile>;
 }
 
+/** Black-box DAST context — a scoped HTTP client plus the target fingerprint. */
+export interface ProbeContext {
+  target: URL;
+  /** Scope-enforcing, rate-limited, budgeted client. Every request goes through it. */
+  http: ProbeHttp;
+  fingerprint: Fingerprint;
+  /** Same-origin paths under test: "/" plus any --path values. */
+  paths: string[];
+  /** Optional credential header for authenticated-vs-anonymous differentials. */
+  auth?: { name: string; value: string };
+  /** Permit POST requests carrying malformed bodies (off by default). */
+  allowPost: boolean;
+  /** Fresh unguessable token for cache-busters and reflection markers. */
+  nonce(): string;
+}
+
 export interface ConfigRule extends RuleBase {
   surface: "config";
   check(this: ConfigRule, ctx: ConfigContext): Finding[];
@@ -115,7 +133,13 @@ export interface AccountRule extends RuleBase {
   check(this: AccountRule, ctx: AccountContext): Finding[];
 }
 
+export interface ProbeRule extends RuleBase {
+  surface: "probe";
+  check(this: ProbeRule, ctx: ProbeContext): Promise<Finding[]>;
+}
+
 const configRules: ConfigRule[] = [];
+const probeRules: ProbeRule[] = [];
 const sourceRules: SourceRule[] = [];
 const accountRules: AccountRule[] = [];
 
@@ -129,6 +153,14 @@ export function registerSource(rule: Omit<SourceRule, "surface">): void {
 
 export function registerAccount(rule: Omit<AccountRule, "surface">): void {
   accountRules.push({ ...rule, surface: "account" });
+}
+
+export function registerProbe(rule: Omit<ProbeRule, "surface">): void {
+  probeRules.push({ ...rule, surface: "probe" });
+}
+
+export function getProbeRules(): readonly ProbeRule[] {
+  return probeRules;
 }
 
 export function getConfigRules(): readonly ConfigRule[] {
@@ -145,7 +177,7 @@ export function getAccountRules(): readonly AccountRule[] {
 
 /** All registered probe IDs — used by `wulf report --matrix` validation. */
 export function allRuleProbeRefs(): { id: string; probe: string }[] {
-  return [...configRules, ...sourceRules, ...accountRules].map((r) => ({
+  return [...configRules, ...sourceRules, ...accountRules, ...probeRules].map((r) => ({
     id: r.id,
     probe: r.probe,
   }));
@@ -157,12 +189,12 @@ export interface RuleSummary {
   severity: Severity;
   probe: string;
   family: string;
-  surface: "config" | "source" | "account";
+  surface: "config" | "source" | "account" | "probe";
 }
 
 /** Flat summary of every registered rule, for the coverage matrix. */
 export function allRules(): RuleSummary[] {
-  return [...configRules, ...sourceRules, ...accountRules].map((r) => ({
+  return [...configRules, ...sourceRules, ...accountRules, ...probeRules].map((r) => ({
     id: r.id,
     title: r.title,
     severity: r.severity,

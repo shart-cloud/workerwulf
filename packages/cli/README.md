@@ -61,6 +61,22 @@ Implemented:
   - **WfP namespace** — `WF-NS-01` (trusted mode), `WF-NS-02` (no outbound),
     `WF-NS-03` (no custom limits), `WF-NS-04` (scripts not untrusted).
 
+- **`wulf probe`** — black-box DAST against a live Worker URL (no credentials, no
+  source). Fingerprints the platform from HTTP behaviour, then runs network
+  vulnerability checks. Scope-gated and rate-limited. See
+  [`docs/dast-probe.md`](docs/dast-probe.md).
+  - **Fingerprint** — `WF-DAST-FP-01` (platform/colo/framework verdict with audit
+    trail), `WF-DAST-ACCESS-01` (Access gate vs. open workers.dev/preview routes).
+  - **Static-asset exposure** — `WF-DAST-EXPOSE-01` (`.dev.vars`/`.env`/`.git`
+    served as assets, values redacted), `-02` (wrangler/project config), `-03`
+    (Worker source), `-04` (production source maps).
+  - **Error disclosure** — `WF-DAST-ERR-01` (stack trace / exception to client),
+    `-02` (uncaught exception / Error 1101 from unauthenticated input).
+  - **Behavioural** — `WF-DAST-CORS-01` (reflected/`null` Origin), `WF-DAST-CACHE-01`
+    (unkeyed-header cache poisoning), `WF-DAST-CACHE-02` (W-WC-04 cross-caller leak,
+    needs `--auth-header`), `WF-DAST-WS-01` (unauthenticated Durable Object / Agents
+    SDK WebSocket, with `cf_agent_state` leak detection).
+
 - **`wulf report`** — aggregate persisted run reports and render the coverage
   matrix, with `--results-dir`, `--run-id`, `--format markdown|json`, `--output`,
   `--matrix`, `--include-probes`.
@@ -80,6 +96,32 @@ wulf report --results-dir ./results             # aggregated markdown report
 wulf report --matrix                            # rule → probe traceability
 wulf report --matrix --include-probes ../harness/results   # + gap analysis
 ```
+
+### `wulf probe` usage
+
+```sh
+# Fingerprint + full vuln sweep of a single Worker you own
+wulf probe https://my-worker.example.workers.dev/
+
+# Fingerprint only (passive signals + reserved paths), no active checks
+wulf probe https://my-worker.example.workers.dev/ --passive
+
+# Multiple hosts/paths, authenticated cache-leak check, CI gate
+wulf probe https://app.example.com/ \
+  --scope ./scope.txt --paths /api,/dashboard \
+  --auth-header "Cookie: session=…" --strict --json
+
+# Throttle and bound the run
+wulf probe https://app.example.com/ --rps 2 --max-requests 150
+```
+
+**Authorization.** `wulf probe` only scans hosts you are allowed to test. The
+target host is implicitly in scope; any additional host (for redirects or extra
+`--paths`) must be listed in a `--scope` file (`one-host-per-line`, `*.sub`
+wildcards) or `--allow`. Requests are capped at `--rps` (default 5) and
+`--max-requests` (default 300). POSTs with malformed bodies are off unless
+`--allow-post` is set. Secret values found in exposed files are redacted from
+the report.
 
 ### `wulf scan` usage
 
