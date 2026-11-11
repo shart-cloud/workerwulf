@@ -114,6 +114,13 @@ export interface ProbeContext {
   auth?: { name: string; value: string };
   /** Permit POST requests carrying malformed bodies (off by default). */
   allowPost: boolean;
+  /**
+   * Suspected celld internal/operator listener (the node's `--advertise`
+   * address), from `--celld-internal`. Added to scope by the command. When set,
+   * the celld operator check probes it; otherwise it probes the target origin
+   * only if the fingerprint already identified celld.
+   */
+  celldInternal?: URL;
   /** Fresh unguessable token for cache-busters and reflection markers. */
   nonce(): string;
 }

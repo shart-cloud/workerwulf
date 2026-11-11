@@ -73,7 +73,7 @@ describe("wulf probe — fingerprint", () => {
   });
 
   it("identifies a self-hosted celld node from its reserved health path", async () => {
-    const worker = new FakeWorker((_r, url) => {
+    const worker = new FakeWorker((_r, url): Partial<ProbeResponse> => {
       if (url.pathname === "/.well-known/celld/health") return { status: 200, body: '{"ok":true}', headers: {} };
       return { headers: {}, body: "<h1>app on celld</h1>" }; // no cloudflare edge headers
     });
@@ -140,6 +140,57 @@ describe("wulf probe — CORS", () => {
     const { output } = await probe("https://api.example.com/", { json: true, allow: "api.example.com" }, worker);
     const cors = JSON.parse(output).sources[0].findings.find((f: { rule_id: string }) => f.rule_id === "WF-DAST-CORS-01");
     expect(cors.severity).toBe("high");
+  });
+});
+
+describe("wulf probe — celld operator exposure", () => {
+  const NODE_STATE = JSON.stringify({
+    ownership: "owner",
+    owned_cells: 3,
+    occupied: true,
+    residents: ["counter:main"],
+    published: [],
+    rss_bytes: 1234,
+    node_load: 0.2,
+    deployment: { version: "v7", prefix: "p", generation: 4 },
+  });
+
+  it("flags an unauthenticated /state on an explicit internal listener as critical", async () => {
+    const worker = new FakeWorker((_r, url) => {
+      if (url.port === "9000" && url.pathname === "/state") return { status: 200, headers: { "content-type": "application/json" }, body: NODE_STATE };
+      return { body: "ok" };
+    });
+    const { output } = await probe(
+      "https://node.example.com/",
+      { json: true, allow: "node.example.com", celldInternal: "https://node.example.com:9000" },
+      worker,
+    );
+    const f = JSON.parse(output).sources[0].findings.find((x: { rule_id: string }) => x.rule_id === "WF-DAST-CELLD-01");
+    expect(f.severity).toBe("critical");
+    expect(f.message).toMatch(/version v7/);
+    expect(f.message).toMatch(/destructive routes were not invoked/);
+  });
+
+  it("detects a merged public+operator listener when the target itself is celld", async () => {
+    const worker = new FakeWorker((_r, url): Partial<ProbeResponse> => {
+      if (url.pathname === "/.well-known/celld/health") return { status: 200, headers: {}, body: '{"ok":true}' };
+      if (url.pathname === "/state") return { status: 200, headers: { "content-type": "application/json" }, body: NODE_STATE };
+      return { headers: {}, body: "app" };
+    });
+    const { output } = await probe("https://cell.example.com/", { json: true, allow: "cell.example.com" }, worker);
+    const f = JSON.parse(output).sources[0].findings.find((x: { rule_id: string }) => x.rule_id === "WF-DAST-CELLD-01");
+    expect(f.message).toMatch(/merged or the internal one is internet-reachable/);
+  });
+
+  it("does not probe /state on a plain Cloudflare target", async () => {
+    const worker = new FakeWorker((_r, url) => {
+      if (url.pathname === "/state") return { status: 200, headers: { "content-type": "application/json" }, body: NODE_STATE };
+      return { body: "ok" };
+    });
+    const { output } = await probe("https://api.example.com/", { json: true, allow: "api.example.com" }, worker);
+    expect(ids(output)).not.toContain("WF-DAST-CELLD-01");
+    // /state was never requested, because the target didn't fingerprint as celld.
+    expect(worker.seen.some((r) => new URL(r.url).pathname === "/state")).toBe(false);
   });
 });
 

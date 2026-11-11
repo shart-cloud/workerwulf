@@ -26,6 +26,8 @@ export interface ProbeOptions {
   passive?: boolean;
   /** "Name: value" credential header for the authenticated cache differential. */
   authHeader?: string;
+  /** Suspected celld internal/operator listener URL (host auto-added to scope). */
+  celldInternal?: string;
   /** Permit POST requests with malformed bodies (off by default). */
   allowPost?: boolean;
   rps?: number;
@@ -66,12 +68,22 @@ export async function runProbe(
     return { output: `error: target must be http(s): "${rawTarget}"`, exitCode: 2 };
   }
 
-  // Scope. The target host is implicitly in scope; everything else must be
-  // listed in --scope or --allow. This is the authorization gate: without a
-  // valid in-scope target the scanner refuses to send a single request.
+  let celldInternal: URL | undefined;
+  if (options.celldInternal) {
+    try {
+      celldInternal = new URL(options.celldInternal);
+    } catch {
+      return { output: `error: --celld-internal must be a URL`, exitCode: 2 };
+    }
+  }
+
+  // Scope. The target host (and the celld-internal host, which is the same node)
+  // are implicitly in scope; everything else must be listed in --scope or
+  // --allow. This is the authorization gate: without a valid in-scope target the
+  // scanner refuses to send a single request.
   let scope: Scope;
   try {
-    scope = buildScope(target, options);
+    scope = buildScope(target, options, celldInternal);
   } catch (err) {
     return { output: `error: ${(err as Error).message}`, exitCode: 2 };
   }
@@ -114,6 +126,7 @@ export async function runProbe(
     paths: dedupePaths(["/", target.pathname, ...parseList(options.paths)]),
     auth,
     allowPost: Boolean(options.allowPost),
+    celldInternal,
     nonce,
   };
 
@@ -143,8 +156,9 @@ export async function runProbe(
   return { output, exitCode };
 }
 
-function buildScope(target: URL, options: ProbeOptions): Scope {
-  const scopes: Scope[] = [parseScope([target.port ? `${target.hostname}:${target.port}` : target.hostname])];
+function buildScope(target: URL, options: ProbeOptions, celldInternal?: URL): Scope {
+  const scopes: Scope[] = [parseScope([target.hostname])];
+  if (celldInternal) scopes.push(parseScope([celldInternal.hostname]));
   if (options.scope) scopes.push(loadScopeFile(options.scope));
   if (options.allow) scopes.push(parseScope(parseList(options.allow)));
   return mergeScopes(...scopes);

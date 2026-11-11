@@ -107,6 +107,7 @@ program
   .option("--paths <paths>", "comma-separated extra same-origin paths to test")
   .option("--passive", "fingerprint only — skip every active vulnerability check")
   .option("--auth-header <header>", '"Name: value" credential for the authenticated cache-leak check')
+  .option("--celld-internal <url>", "suspected celld internal/operator listener URL to check for exposure")
   .option("--allow-post", "permit POST requests with malformed bodies (off by default)")
   .option("--rps <n>", "max requests per second (default: 5)", (v) => Number(v))
   .option("--max-requests <n>", "hard request budget for the whole run (default: 300)", (v) => Number(v))
@@ -129,6 +130,7 @@ program
       paths: opts["paths"] as string | undefined,
       passive: Boolean(opts["passive"]),
       authHeader: opts["authHeader"] as string | undefined,
+      celldInternal: opts["celldInternal"] as string | undefined,
       allowPost: Boolean(opts["allowPost"]),
       rps: opts["rps"] as number | undefined,
       maxRequests: opts["maxRequests"] as number | undefined,

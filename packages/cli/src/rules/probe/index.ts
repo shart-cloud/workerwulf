@@ -8,3 +8,4 @@ import "./errors.js"; // WF-DAST-ERR-01..02 — exception / stack-trace disclosu
 import "./cors.js"; // WF-DAST-CORS-01 — reflected Origin
 import "./cache.js"; // WF-DAST-CACHE-01..02 — cache poisoning / cross-caller leak
 import "./websocket.js"; // WF-DAST-WS-01 — unauthenticated DO/Agents WebSocket
+import "./celld.js"; // WF-DAST-CELLD-01..02 — exposed celld operator / peer listener

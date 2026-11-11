@@ -76,6 +76,10 @@ Implemented:
     (unkeyed-header cache poisoning), `WF-DAST-CACHE-02` (W-WC-04 cross-caller leak,
     needs `--auth-header`), `WF-DAST-WS-01` (unauthenticated Durable Object / Agents
     SDK WebSocket, with `cf_agent_state` leak detection).
+  - **celld** (self-hosted Workers runtime) — `WF-DAST-CELLD-01` (unauthenticated
+    operator API `/state` reachable → evict/`/do`/`/shutdown` also exposed),
+    `WF-DAST-CELLD-02` (peer-protocol port reachable). Probes the target only when
+    it fingerprints as celld, or an explicit `--celld-internal <url>`.
 
 - **`wulf report`** — aggregate persisted run reports and render the coverage
   matrix, with `--results-dir`, `--run-id`, `--format markdown|json`, `--output`,
@@ -113,6 +117,9 @@ wulf probe https://app.example.com/ \
 
 # Throttle and bound the run
 wulf probe https://app.example.com/ --rps 2 --max-requests 150
+
+# Check whether a celld node's internal/operator listener is exposed
+wulf probe https://my-node.example.com/ --celld-internal https://my-node.example.com:9000
 ```
 
 **Authorization.** `wulf probe` only scans hosts you are allowed to test. The

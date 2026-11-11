@@ -53,10 +53,32 @@ with a `high`/`medium`/`low` confidence.
 from Cloudflare's edge by its public listener, which reserves
 `/.well-known/celld/health` (returning `{"ok":true}` / `{"ok":false}`) and can
 emit an `x-celld-overload` header — neither of which Cloudflare's edge produces.
-This keeps a self-hosted node from being mis-reported as Cloudflare. celld's
-*internal* listener (peer protocol + unauthenticated operator API, `x-cells-*`
-headers) is a separate host/port and a high-value exposure target; a dedicated
-celld check set is a planned follow-up, not part of this release. `WF-DAST-FP-01` reports the verdict and lists
+This keeps a self-hosted node from being mis-reported as Cloudflare.
+
+### celld operator / peer exposure (`WF-DAST-CELLD-01/02`)
+
+celld runs two listeners: a **public** one that serves the Worker, and an
+**internal** one that serves the peer protocol and an operator API. Per celld's
+own `docs/security.md`, the operator routes — `/state`, `/cell/<scope>`,
+`/evict/<scope>`, `/do/<id>`, `POST /shutdown` — **take no authentication**; the
+entire design relies on that listener living on a trusted private network. If it
+is reachable from an untrusted network, an unauthenticated attacker can read node
+state, evict cells, send requests straight to Durable Objects (bypassing the
+Worker), and gracefully shut the node down.
+
+`WF-DAST-CELLD-01` confirms exposure using the **one read-only route**,
+`GET /state` (matched by a quorum of celld-specific node-state keys), and
+**never calls the destructive routes** — their exposure is inferred because they
+share the same unauthenticated listener. It runs against:
+
+- `--celld-internal <url>` — the node's advertised internal address, the
+  realistic "is my internal listener reachable from outside?" check; its host is
+  auto-added to scope. (`WF-DAST-CELLD-02` additionally flags when the
+  HMAC-gated `/peer/probe` port answers at all — the peer transport is plaintext
+  HTTP and must never face an untrusted network.)
+- the **target origin itself**, but only when the fingerprint already identified
+  celld — catching an obsolete single-listener / merged-port deployment without
+  adding a `/state` request to every non-celld scan. `WF-DAST-FP-01` reports the verdict and lists
 every signal as evidence so the call can be audited — it is never a vulnerability
 on its own.
 
@@ -82,6 +104,8 @@ back-references it, same as the static rules).
 | `WF-DAST-CACHE-01` | high/low | Unkeyed request header (`X-Forwarded-Host`, …) reflected (high if it persists) |
 | `WF-DAST-CACHE-02` | critical | Authenticated response served to an anonymous caller from cache (W-WC-04) |
 | `WF-DAST-WS-01` | medium/high | Durable Object / Agents SDK WebSocket accepts an unauthenticated upgrade (high if `cf_agent_state` leaks) |
+| `WF-DAST-CELLD-01` | critical | celld operator API (`/state`) reachable unauthenticated → `/evict`, `/do`, `/shutdown` exposed too |
+| `WF-DAST-CELLD-02` | high | celld peer-protocol port reachable from the scanner (plaintext transport off a private network) |
 
 ### False-positive controls
 
@@ -106,6 +130,7 @@ back-references it, same as the static rules).
 --paths <paths>       extra same-origin paths to test, comma-separated
 --passive             fingerprint only; skip every active check
 --auth-header "N: v"  credential for WF-DAST-CACHE-02 (e.g. "Cookie: session=…")
+--celld-internal <url> suspected celld internal/operator listener to check for exposure
 --allow-post          permit POST requests with malformed bodies
 --rps <n>             requests per second (default 5)
 --max-requests <n>    hard request budget (default 300)
