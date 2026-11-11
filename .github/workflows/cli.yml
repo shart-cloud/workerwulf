@@ -5,11 +5,15 @@ on:
     branches: [main]
     paths:
       - "packages/cli/**"
+      - "packages/core/**"
+      - "packages/shared/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/cli.yml"
   pull_request:
     paths:
       - "packages/cli/**"
+      - "packages/core/**"
+      - "packages/shared/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/cli.yml"
 
@@ -35,14 +39,14 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
 
-      - name: Install (cli + its deps only)
-        run: pnpm install --frozen-lockfile --filter @wulf/cli...
+      - name: Install (cli, core + their deps only)
+        run: pnpm install --frozen-lockfile --filter @wulf/cli... --filter @wulf/core...
 
       - name: Typecheck
-        run: pnpm --filter @wulf/cli typecheck
+        run: pnpm --filter @wulf/core --filter @wulf/cli typecheck
 
       - name: Test
-        run: pnpm --filter @wulf/cli test
+        run: pnpm --filter @wulf/core --filter @wulf/cli test
 
   build:
     name: build & smoke-test

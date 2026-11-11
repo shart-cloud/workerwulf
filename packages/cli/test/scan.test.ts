@@ -1,6 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PermissionDenied } from "@wulf/core";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { runScan } from "../src/commands/scan.js";
 import type { CfClient, RawBinding, RawNamespace } from "../src/cf/client.js";
@@ -118,5 +119,81 @@ describe("wulf scan — credentials", () => {
     const { exitCode, output } = await runScan({ json: false });
     expect(exitCode).toBe(2);
     expect(output).toContain("missing credentials");
+  });
+});
+
+describe("wulf scan — coverage", () => {
+  /** Same account, but the token can't read prey's settings. */
+  class DeniedBindingsClient extends FakeCfClient {
+    override async getScriptBindings(): Promise<RawBinding[]> {
+      throw new PermissionDenied({ path: "/workers/scripts/prey/settings", status: 403 });
+    }
+  }
+
+  it("reports a denied read as a coverage gap instead of passing silently", async () => {
+    const { output } = await runScan({ accountId: "acct" }, new DeniedBindingsClient());
+    expect(output).toContain("note: script:prey bindings: denied (HTTP 403");
+    expect(output).toContain("binding and least-privilege rules ran on partial data");
+  });
+
+  it("adds the gaps to JSON output and keeps the rules that could still run", async () => {
+    const { output } = await runScan({ accountId: "acct", json: true }, new DeniedBindingsClient());
+    const parsed = JSON.parse(output);
+    expect(parsed.coverage).toEqual([
+      {
+        target: "script:prey",
+        op: "bindings",
+        status: "denied",
+        detail: "HTTP 403 on /workers/scripts/prey/settings",
+      },
+    ]);
+    const ids = ruleIds(output);
+    expect(ids).not.toContain("WF-PRIV-01"); // needs bindings
+    expect(ids).toContain("WF-NS-01"); // namespace reads still complete
+  });
+
+  it("reports an empty coverage list when every read completed", async () => {
+    const { output } = await runScan({ accountId: "acct", json: true }, new FakeCfClient());
+    expect(JSON.parse(output).coverage).toEqual([]);
+  });
+
+  it("exits 2 with the reason when scripts can't be listed", async () => {
+    class NoList extends FakeCfClient {
+      override async listScripts(): Promise<string[]> {
+        throw new PermissionDenied({ path: "/accounts/acct/workers/scripts", status: 403 });
+      }
+    }
+    const { exitCode, output } = await runScan({ accountId: "acct" }, new NoList());
+    expect(exitCode).toBe(2);
+    expect(output).toBe(
+      "error: cannot list Workers scripts: permission denied (HTTP 403) on /accounts/acct/workers/scripts",
+    );
+  });
+
+  it("runs end to end over the REST layer with fetch", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string) => {
+      calls.push(url);
+      const path = new URL(url).pathname.replace("/client/v4", "");
+      const json = (result: unknown) => Response.json({ success: true, result });
+      if (path === "/accounts/acct/workers/scripts") return json([{ id: "prey" }]);
+      if (path.endsWith("/settings")) return json({ bindings: [{ type: "kv_namespace", name: "UNUSED_KV" }] });
+      if (path.endsWith("/routes")) return new Response("", { status: 404 });
+      if (path.endsWith("/content")) return new Response(DEPLOYED_CONTENT);
+      if (path === "/accounts/acct/workers/dispatch/namespaces") return json([]);
+      return new Response("unexpected", { status: 599 });
+    });
+    try {
+      const { output, exitCode } = await runScan({ accountId: "acct", apiToken: "t", json: true });
+      expect(exitCode).toBe(0);
+      const parsed = JSON.parse(output);
+      expect(ruleIds(output)).toContain("WF-PRIV-01");
+      expect(parsed.coverage).toEqual([
+        expect.objectContaining({ target: "script:prey", op: "routes", status: "unavailable" }),
+      ]);
+      expect(calls.every((u) => u.startsWith("https://api.cloudflare.com/client/v4/"))).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

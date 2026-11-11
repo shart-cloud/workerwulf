@@ -1,20 +1,8 @@
 import type { BindingType, DeclaredBinding } from "../parsers/bindings.js";
 
-/** Raw binding entry from the Cloudflare API (script settings). */
-export interface RawBinding {
-  type: string;
-  name: string;
-  [key: string]: unknown;
-}
+import type { RawBinding, RawNamespace } from "@wulf/core";
 
-/** Normalized dispatch-namespace data from the API. */
-export interface RawNamespace {
-  name: string;
-  trusted?: boolean;
-  outbound?: unknown;
-  limits?: unknown;
-  scripts?: { name: string; untrusted?: boolean }[];
-}
+export type { RawBinding, RawNamespace };
 
 /**
  * The Cloudflare surface the scanner needs. Defined as an interface so the

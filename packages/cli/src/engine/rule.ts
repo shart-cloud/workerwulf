@@ -1,43 +1,13 @@
+import type { Finding, Severity } from "@wulf/core";
+
 import type { BindingMap } from "../ast/binding-map.js";
 import type { SourceFile } from "../ast/parse.js";
 import type { DeclaredBinding } from "../parsers/bindings.js";
 import type { WranglerConfig } from "../parsers/wrangler.js";
 
-export type Severity = "critical" | "high" | "medium" | "low" | "informational";
-
-export const SEVERITY_ORDER: Record<Severity, number> = {
-  critical: 0,
-  high: 1,
-  medium: 2,
-  low: 3,
-  informational: 4,
-};
-
-export interface Evidence {
-  type: "config" | "source" | "binding" | "api";
-  label: string;
-  /** Short inline text payload. */
-  inline?: string;
-  /** Relative path to a larger artifact. */
-  file?: string;
-}
-
-export interface Finding {
-  rule_id: string;
-  title: string;
-  severity: Severity;
-  /** "wrangler.toml", "src/index.ts:42", "script:prey-worker", etc. */
-  resource: string;
-  /** What's wrong and why. */
-  message: string;
-  /** How to fix. */
-  remediation: string;
-  /** Back-reference: "W-CAP-01", "F-002", etc. */
-  probe: string;
-  /** RULES_PRD family: "A".."H". */
-  family: string;
-  evidence?: Evidence[];
-}
+// The finding contract is owned by @wulf/core (Effect Schema), shared with the
+// platform hub and the research harness.
+export { SEVERITY_ORDER, type Evidence, type Finding, type Severity } from "@wulf/core";
 
 interface RuleBase {
   id: string;

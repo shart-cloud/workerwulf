@@ -89,11 +89,22 @@ wulf scan --source ./my-worker --strict --json     # add drift detection
 wulf scan --namespace tenants                       # one WfP namespace
 ```
 
-The Cloudflare client sits behind a small `CfClient` interface (`src/cf/client.ts`),
-so the account rules and orchestration are unit-tested offline with a fake client.
-The live `RestCfClient` is best-effort: WfP namespace introspection (trusted mode,
-outbound, limits) and per-script routes depend on the account's API capabilities
-and degrade to no-finding rather than a false claim (PRD §12.1).
+Collection goes through `@wulf/core`'s typed `CfApi` service: 401/403, 404,
+429 and 5xx are distinct errors, and 429/5xx are retried with backoff. Only failing
+to list scripts stops a scan. Any other read that doesn't complete (a script's
+bindings, routes or content, or WfP namespaces) is reported as a **coverage gap**,
+not treated as empty:
+
+```text
+note: script:prey bindings: denied (HTTP 403 on …/settings); binding and least-privilege rules ran on partial data
+```
+
+With `--json`, those gaps are listed in a top-level `coverage` array. It is empty
+when every read completed. A missing finding next to a coverage gap means "not
+checked", not "clean".
+
+A promise-shaped `CfClient` (`src/cf/client.ts`) can still be injected, which is
+how the account rules are tested offline with a fake client.
 
 ## Usage
 

@@ -2,9 +2,21 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
+import * as Effect from "effect/Effect";
+import * as Redacted from "effect/Redacted";
+import {
+  cfApiFromPromises,
+  cfApiRest,
+  collectAccount,
+  type AccountSnapshot,
+  type CfApi,
+  type Coverage,
+} from "@wulf/core";
+import type * as Layer from "effect/Layer";
+
 import { buildBindingMap } from "../ast/binding-map.js";
 import { parse, type SourceFile } from "../ast/parse.js";
-import { mapApiBinding, RestCfClient, type CfClient } from "../cf/client.js";
+import { mapApiBinding, type CfClient } from "../cf/client.js";
 import {
   buildReport,
   renderHuman,
@@ -57,8 +69,10 @@ export async function runScan(
   const accountId = options.accountId ?? process.env["CLOUDFLARE_ACCOUNT_ID"];
   const token = options.apiToken ?? process.env["CLOUDFLARE_API_TOKEN"];
 
-  let client = clientOverride;
-  if (!client) {
+  let api: Layer.Layer<CfApi>;
+  if (clientOverride) {
+    api = cfApiFromPromises(accountId ?? "(injected)", clientOverride);
+  } else {
     if (!accountId || !token) {
       return {
         output:
@@ -67,7 +81,7 @@ export async function runScan(
         exitCode: 2,
       };
     }
-    client = new RestCfClient({ accountId, token });
+    api = cfApiRest({ accountId, token: Redacted.make(token) });
   }
 
   const minSeverity: Severity = options.severity ?? "low";
@@ -75,24 +89,33 @@ export async function runScan(
     (options.ignore ?? "").split(",").map((s) => s.trim()).filter(Boolean),
   );
 
-  let ctx: AccountContext;
-  try {
-    ctx = await gatherAccountContext(client, accountId ?? "(injected)", options);
-  } catch (err) {
-    return { output: `error: ${(err as Error).message}`, exitCode: 2 };
+  const collected = await Effect.runPromise(
+    collectAccount(options.namespace !== undefined ? { namespace: options.namespace } : {}).pipe(
+      Effect.provide(api),
+      Effect.result,
+    ),
+  );
+  if (collected._tag === "Failure") {
+    const e = collected.failure;
+    const why = e._tag === "PermissionDenied" ? `permission denied (HTTP ${e.status})` : e._tag;
+    return { output: `error: cannot list Workers scripts: ${why} on ${e.path}`, exitCode: 2 };
   }
+  const snapshot = collected.success;
+  const ctx = toAccountContext(snapshot, options);
+  const gaps = snapshot.coverage.filter((c) => c.status !== "complete");
 
   const outcome = runAccountRules(ctx);
   const kept = outcome.findings.filter((f) => !ignore.has(f.rule_id));
   const groups = groupByResource(kept);
   const filtered = groups.map((g) => ({ ...g, findings: atOrAbove(g.findings, minSeverity) }));
 
-  const report = buildReport(randomUUID(), new Date().toISOString(), filtered);
+  const report = buildReport(randomUUID(), new Date().toISOString(), filtered, gaps);
   const all = totalFindings(report);
 
-  const notes: string[] = outcome.errors.map(
-    (e) => `note: rule ${e.rule_id} errored: ${e.message}`,
-  );
+  const notes: string[] = [
+    ...gaps.map(coverageNote),
+    ...outcome.errors.map((e) => `note: rule ${e.rule_id} errored: ${e.message}`),
+  ];
   if (options.save) {
     notes.push(`note: saved run report to ${saveRunReport(report, options.save)}`);
   }
@@ -110,56 +133,50 @@ export async function runScan(
   return { output, exitCode };
 }
 
-async function gatherAccountContext(
-  client: CfClient,
-  accountId: string,
-  options: ScanOptions,
-): Promise<AccountContext> {
-  const scriptNames = await client.listScripts();
-  const scripts: ScriptMetadata[] = [];
-  for (const name of scriptNames) {
-    const [rawBindings, routes, content] = await Promise.all([
-      client.getScriptBindings(name),
-      client.getRoutes(name),
-      client.getScriptContent(name),
-    ]);
-    const declared = rawBindings
+/**
+ * Shape a collected snapshot into the rules' AccountContext. A read that didn't
+ * complete becomes an empty value here (the rules expect arrays), and the
+ * matching coverage note tells the user those rules ran on partial data.
+ */
+function toAccountContext(snapshot: AccountSnapshot, options: ScanOptions): AccountContext {
+  const scripts: ScriptMetadata[] = snapshot.scripts.map((s) => {
+    const declared = (s.bindings ?? [])
       .map(mapApiBinding)
       .filter((b): b is NonNullable<typeof b> => b !== undefined);
-    let bindingMap: ScriptMetadata["bindingMap"];
-    if (content !== undefined) {
-      bindingMap = buildBindingMap(parse(`script:${name}`, content));
-    }
-    scripts.push({
-      name,
+    return {
+      name: s.name,
       declared,
-      routes: routes.map((pattern) => ({ pattern })),
-      content,
-      bindingMap,
-    });
-  }
+      routes: (s.routes ?? []).map((pattern) => ({ pattern })),
+      content: s.content,
+      bindingMap:
+        s.content !== undefined ? buildBindingMap(parse(`script:${s.name}`, s.content)) : undefined,
+    };
+  });
 
-  const namespaceNames = options.namespace
-    ? [options.namespace]
-    : await client.listNamespaces();
-  const namespaces: WfPNamespace[] = [];
-  for (const name of namespaceNames) {
-    const raw = await client.getNamespace(name);
-    if (!raw) continue;
-    namespaces.push({
-      name: raw.name,
-      trusted: Boolean(raw.trusted),
-      hasOutbound: Boolean(raw.outbound),
-      hasLimits: Boolean(raw.limits),
-      scripts: (raw.scripts ?? []).map((s) => ({
-        name: s.name,
-        untrusted: s.untrusted === true,
-      })),
-    });
-  }
+  const namespaces: WfPNamespace[] = snapshot.namespaces.map((raw) => ({
+    name: raw.name,
+    trusted: Boolean(raw.trusted),
+    hasOutbound: Boolean(raw.outbound),
+    hasLimits: Boolean(raw.limits),
+    scripts: (raw.scripts ?? []).map((s) => ({ name: s.name, untrusted: s.untrusted === true })),
+  }));
 
   const localSources = options.source ? loadLocalSources(options.source) : undefined;
-  return { accountId, scripts, namespaces, localSources };
+  return { accountId: snapshot.accountId, scripts, namespaces, localSources };
+}
+
+const AFFECTED_RULES: Record<string, string> = {
+  bindings: "binding and least-privilege rules",
+  routes: "public-route rules",
+  content: "binding-use and drift rules",
+  listNamespaces: "WfP namespace rules",
+  namespace: "WfP namespace rules",
+};
+
+function coverageNote(c: Coverage): string {
+  const affected = AFFECTED_RULES[c.op] ?? "related rules";
+  const detail = c.detail ? ` (${c.detail})` : "";
+  return `note: ${c.target} ${c.op}: ${c.status}${detail}; ${affected} ran on partial data`;
 }
 
 /** Map deployed-script name → local SourceFile, keyed by wrangler `name`. */
