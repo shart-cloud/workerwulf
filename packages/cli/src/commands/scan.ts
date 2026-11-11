@@ -2,27 +2,22 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { buildBindingMap } from "../ast/binding-map.js";
-import { parse, type SourceFile } from "../ast/parse.js";
-import { mapApiBinding, RestCfClient, type CfClient } from "../cf/client.js";
+import * as Effect from "effect/Effect";
+import type * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import {
-  buildReport,
-  renderHuman,
-  renderJson,
-  totalFindings,
-  type FindingGroup,
-} from "../engine/output.js";
-import type {
-  AccountContext,
-  Finding,
-  ScriptMetadata,
-  WfPNamespace,
-} from "../engine/rule.js";
-import { atOrAbove, hasHighOrAbove, runAccountRules } from "../engine/runner.js";
-import type { Severity } from "../engine/rule.js";
+  analyzeAccount,
+  hasHighOrAbove,
+  parse,
+  type SourceFile,
+  type Severity,
+} from "@wulf/analyze";
+import { cfApiFromPromises, cfApiRest, collectAccount, type CfApi, type Coverage } from "@wulf/core";
+
+import type { CfClient } from "../cf/client.js";
+import { buildReport, renderHuman, renderJson, totalFindings } from "../engine/output.js";
 import { parseWrangler } from "../parsers/wrangler.js";
 import { saveRunReport } from "../report/persist.js";
-import "../rules/index.js";
 
 const CONFIG_NAMES = ["wrangler.toml", "wrangler.json", "wrangler.jsonc"];
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".wrangler"]);
@@ -57,8 +52,10 @@ export async function runScan(
   const accountId = options.accountId ?? process.env["CLOUDFLARE_ACCOUNT_ID"];
   const token = options.apiToken ?? process.env["CLOUDFLARE_API_TOKEN"];
 
-  let client = clientOverride;
-  if (!client) {
+  let api: Layer.Layer<CfApi>;
+  if (clientOverride) {
+    api = cfApiFromPromises(accountId ?? "(injected)", clientOverride);
+  } else {
     if (!accountId || !token) {
       return {
         output:
@@ -67,7 +64,7 @@ export async function runScan(
         exitCode: 2,
       };
     }
-    client = new RestCfClient({ accountId, token });
+    api = cfApiRest({ accountId, token: Redacted.make(token) });
   }
 
   const minSeverity: Severity = options.severity ?? "low";
@@ -75,24 +72,32 @@ export async function runScan(
     (options.ignore ?? "").split(",").map((s) => s.trim()).filter(Boolean),
   );
 
-  let ctx: AccountContext;
-  try {
-    ctx = await gatherAccountContext(client, accountId ?? "(injected)", options);
-  } catch (err) {
-    return { output: `error: ${(err as Error).message}`, exitCode: 2 };
+  const collected = await Effect.runPromise(
+    collectAccount(options.namespace !== undefined ? { namespace: options.namespace } : {}).pipe(
+      Effect.provide(api),
+      Effect.result,
+    ),
+  );
+  if (collected._tag === "Failure") {
+    const e = collected.failure;
+    const why = e._tag === "PermissionDenied" ? `permission denied (HTTP ${e.status})` : e._tag;
+    return { output: `error: cannot list Workers scripts: ${why} on ${e.path}`, exitCode: 2 };
   }
+  const snapshot = collected.success;
+  const analysis = analyzeAccount(snapshot, {
+    ...(options.source ? { localSources: loadLocalSources(options.source) } : {}),
+    ignore,
+    severity: minSeverity,
+  });
+  const gaps = analysis.gaps;
 
-  const outcome = runAccountRules(ctx);
-  const kept = outcome.findings.filter((f) => !ignore.has(f.rule_id));
-  const groups = groupByResource(kept);
-  const filtered = groups.map((g) => ({ ...g, findings: atOrAbove(g.findings, minSeverity) }));
-
-  const report = buildReport(randomUUID(), new Date().toISOString(), filtered);
+  const report = buildReport(randomUUID(), new Date().toISOString(), analysis.groups, gaps);
   const all = totalFindings(report);
 
-  const notes: string[] = outcome.errors.map(
-    (e) => `note: rule ${e.rule_id} errored: ${e.message}`,
-  );
+  const notes: string[] = [
+    ...gaps.map(coverageNote),
+    ...analysis.errors.map((e) => `note: rule ${e.rule_id} errored: ${e.message}`),
+  ];
   if (options.save) {
     notes.push(`note: saved run report to ${saveRunReport(report, options.save)}`);
   }
@@ -110,56 +115,18 @@ export async function runScan(
   return { output, exitCode };
 }
 
-async function gatherAccountContext(
-  client: CfClient,
-  accountId: string,
-  options: ScanOptions,
-): Promise<AccountContext> {
-  const scriptNames = await client.listScripts();
-  const scripts: ScriptMetadata[] = [];
-  for (const name of scriptNames) {
-    const [rawBindings, routes, content] = await Promise.all([
-      client.getScriptBindings(name),
-      client.getRoutes(name),
-      client.getScriptContent(name),
-    ]);
-    const declared = rawBindings
-      .map(mapApiBinding)
-      .filter((b): b is NonNullable<typeof b> => b !== undefined);
-    let bindingMap: ScriptMetadata["bindingMap"];
-    if (content !== undefined) {
-      bindingMap = buildBindingMap(parse(`script:${name}`, content));
-    }
-    scripts.push({
-      name,
-      declared,
-      routes: routes.map((pattern) => ({ pattern })),
-      content,
-      bindingMap,
-    });
-  }
+const AFFECTED_RULES: Record<string, string> = {
+  bindings: "binding and least-privilege rules",
+  routes: "public-route rules",
+  content: "binding-use and drift rules",
+  listNamespaces: "WfP namespace rules",
+  namespace: "WfP namespace rules",
+};
 
-  const namespaceNames = options.namespace
-    ? [options.namespace]
-    : await client.listNamespaces();
-  const namespaces: WfPNamespace[] = [];
-  for (const name of namespaceNames) {
-    const raw = await client.getNamespace(name);
-    if (!raw) continue;
-    namespaces.push({
-      name: raw.name,
-      trusted: Boolean(raw.trusted),
-      hasOutbound: Boolean(raw.outbound),
-      hasLimits: Boolean(raw.limits),
-      scripts: (raw.scripts ?? []).map((s) => ({
-        name: s.name,
-        untrusted: s.untrusted === true,
-      })),
-    });
-  }
-
-  const localSources = options.source ? loadLocalSources(options.source) : undefined;
-  return { accountId, scripts, namespaces, localSources };
+function coverageNote(c: Coverage): string {
+  const affected = AFFECTED_RULES[c.op] ?? "related rules";
+  const detail = c.detail ? ` (${c.detail})` : "";
+  return `note: ${c.target} ${c.op}: ${c.status}${detail}; ${affected} ran on partial data`;
 }
 
 /** Map deployed-script name → local SourceFile, keyed by wrangler `name`. */
@@ -193,21 +160,4 @@ function discoverConfigs(dir: string): string[] {
   };
   if (existsSync(abs) && statSync(abs).isDirectory()) walk(abs);
   return out;
-}
-
-/** Bucket findings into FindingGroups by their resource prefix (script:/namespace:). */
-function groupByResource(findings: Finding[]): FindingGroup[] {
-  const groups = new Map<string, Finding[]>();
-  for (const f of findings) {
-    const m = f.resource.match(/^(script:[^:]+|namespace:[^:]+)/);
-    const key = m ? m[1]! : "account";
-    const list = groups.get(key);
-    if (list) list.push(f);
-    else groups.set(key, [f]);
-  }
-  return [...groups.entries()].map(([source, fs]) => ({
-    kind: "account" as const,
-    source,
-    findings: fs,
-  }));
 }

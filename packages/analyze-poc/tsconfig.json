@@ -1,0 +1,11 @@
+{
+  // The Worker: Workers types only. @wulf/analyze uses no Node APIs.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022"],
+    "types": ["@cloudflare/workers-types"],
+    "noEmit": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["src/oxc-shim.node.ts"]
+}

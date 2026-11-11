@@ -1,3 +1,4 @@
+import { isMemberAccess, objectLiteralProperties } from "../../ast/nodes.js";
 import type { AstNode, SourceFile } from "../../ast/parse.js";
 import { locAt } from "../../ast/parse.js";
 import { calleeMemberPath, exprName, findEnvAccess, nameLooksSecret, nodeText } from "../../ast/patterns.js";
@@ -126,7 +127,7 @@ export function isRequestDerived(node: AstNode | undefined, tainted: Set<string>
     }
   }
 
-  if (node.type === "StaticMemberExpression" || node.type === "ComputedMemberExpression") {
+  if (isMemberAccess(node)) {
     const object = node["object"] as AstNode | undefined;
     if (isRequestDerived(object, tainted)) return true;
     const name = exprName(node)?.toLowerCase();
@@ -146,8 +147,8 @@ export function hasAuthContextHeader(node: AstNode | undefined): boolean {
     if (n.type === "Literal" && typeof n["value"] === "string" && AUTH_CONTEXT_RE.test(n["value"] as string)) {
       found = true;
     }
-    if (n.type === "ObjectProperty") {
-      const key = propKeyName(n);
+    for (const prop of objectLiteralProperties(n)) {
+      const key = propKeyName(prop);
       if (key && AUTH_CONTEXT_RE.test(key)) found = true;
     }
   });
@@ -197,7 +198,7 @@ export function isSecretLikeExpression(
   scanAst(node, (n) => {
     if (found) return;
     if (n.type === "Identifier" && nameLooksSecret(n["name"] as string)) found = true;
-    if ((n.type === "StaticMemberExpression" || n.type === "ComputedMemberExpression") && nameLooksSecret(exprName(n) ?? "")) {
+    if (isMemberAccess(n) && nameLooksSecret(exprName(n) ?? "")) {
       found = true;
     }
   });

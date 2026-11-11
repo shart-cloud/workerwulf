@@ -1,3 +1,4 @@
+import { isObjectLiteralProperty, PROPERTY } from "../../ast/nodes.js";
 import type { AstNode } from "../../ast/parse.js";
 import { calleeMemberPath, isConstructOf } from "../../ast/patterns.js";
 import { findNodes } from "../../ast/walk.js";
@@ -96,7 +97,8 @@ registerSource({
     const severity = hasSensitiveBindings ? "high" : "low";
     const bindingText = hasSensitiveBindings ? ` Declared sensitive bindings: ${highBlastSummary(ctx.config)}.` : "";
 
-    for (const { node } of findNodes(ctx.source.ast, "ObjectProperty")) {
+    for (const { node, ancestors } of findNodes(ctx.source.ast, PROPERTY)) {
+      if (!isObjectLiteralProperty(node, ancestors[ancestors.length - 1])) continue;
       const key = propKeyName(node)?.toLowerCase();
       if (key !== "access-control-allow-origin") continue;
       if (literalString(propValue(node)) !== "*") continue;
@@ -182,7 +184,7 @@ function responseOptionsHasRedirectLocation(options: AstNode | undefined, tainte
   let hasRedirectStatus = false;
   let hasTaintedLocation = false;
   for (const prop of properties) {
-    if (prop.type !== "ObjectProperty") continue;
+    if (prop.type !== "Property") continue;
     const key = propKeyName(prop)?.toLowerCase();
     const value = propValue(prop);
     if (key === "status" && REDIRECT_STATUSES.has(literalNumber(value) ?? 0)) hasRedirectStatus = true;
@@ -195,7 +197,7 @@ function headersObjectHasTaintedLocation(headers: AstNode | undefined, tainted: 
   if (headers?.type !== "ObjectExpression") return false;
   const properties = (headers["properties"] as AstNode[] | undefined) ?? [];
   return properties.some(
-    (prop) => prop.type === "ObjectProperty" && propKeyName(prop)?.toLowerCase() === "location" && isRequestDerived(propValue(prop), tainted),
+    (prop) => prop.type === "Property" && propKeyName(prop)?.toLowerCase() === "location" && isRequestDerived(propValue(prop), tainted),
   );
 }
 
@@ -203,6 +205,6 @@ function responseOptionsHasRequestHeaders(options: AstNode | undefined, tainted:
   if (options?.type !== "ObjectExpression") return false;
   const properties = (options["properties"] as AstNode[] | undefined) ?? [];
   return properties.some(
-    (prop) => prop.type === "ObjectProperty" && propKeyName(prop)?.toLowerCase() === "headers" && isRequestDerived(propValue(prop), tainted),
+    (prop) => prop.type === "Property" && propKeyName(prop)?.toLowerCase() === "headers" && isRequestDerived(propValue(prop), tainted),
   );
 }

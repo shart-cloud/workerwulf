@@ -1,3 +1,4 @@
+import { isStaticMember, MEMBER_EXPRESSION } from "../../ast/nodes.js";
 import type { AstNode } from "../../ast/parse.js";
 import { locAt } from "../../ast/parse.js";
 import {
@@ -27,7 +28,8 @@ registerSource({
   check(ctx) {
     const hyperdrive = bindingNamesOfType(ctx.config, "hyperdrive");
     const findings: Finding[] = [];
-    for (const { node, ancestors } of findNodes(ctx.source.ast, "StaticMemberExpression")) {
+    for (const { node, ancestors } of findNodes(ctx.source.ast, MEMBER_EXPRESSION)) {
+      if (!isStaticMember(node)) continue;
       const property = node["property"] as AstNode | undefined;
       if (property?.type !== "Identifier" || property["name"] !== "connectionString") continue;
       const base = node["object"] as AstNode | undefined;

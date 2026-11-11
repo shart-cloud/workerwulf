@@ -1,3 +1,4 @@
+import { isObjectLiteralProperty } from "../../ast/nodes.js";
 import type { AstNode } from "../../ast/parse.js";
 import { locAt } from "../../ast/parse.js";
 import {
@@ -102,7 +103,7 @@ function securityContextName(ancestors: AstNode[]): string | undefined {
     if (a.type === "VariableDeclarator") {
       const id = a["id"] as AstNode | undefined;
       if (id?.type === "Identifier") name = id["name"] as string;
-    } else if (a.type === "ObjectProperty" || a.type === "PropertyDefinition") {
+    } else if (isObjectLiteralProperty(a, ancestors[i - 1]) || a.type === "PropertyDefinition") {
       const key = a["key"] as AstNode | undefined;
       if (key?.type === "Identifier") name = key["name"] as string;
     } else if (a.type === "AssignmentExpression") {

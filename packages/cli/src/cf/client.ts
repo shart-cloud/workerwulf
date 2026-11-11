@@ -1,20 +1,7 @@
-import type { BindingType, DeclaredBinding } from "../parsers/bindings.js";
+import type { RawBinding, RawNamespace } from "@wulf/core";
 
-/** Raw binding entry from the Cloudflare API (script settings). */
-export interface RawBinding {
-  type: string;
-  name: string;
-  [key: string]: unknown;
-}
-
-/** Normalized dispatch-namespace data from the API. */
-export interface RawNamespace {
-  name: string;
-  trusted?: boolean;
-  outbound?: unknown;
-  limits?: unknown;
-  scripts?: { name: string; untrusted?: boolean }[];
-}
+export type { RawBinding, RawNamespace };
+export { mapApiBinding } from "@wulf/analyze";
 
 /**
  * The Cloudflare surface the scanner needs. Defined as an interface so the
@@ -28,38 +15,6 @@ export interface CfClient {
   getRoutes(scriptName: string): Promise<string[]>;
   listNamespaces(): Promise<string[]>;
   getNamespace(name: string): Promise<RawNamespace | undefined>;
-}
-
-/**
- * Map a Cloudflare API binding `type` to a capability BindingType. Returns
- * undefined for non-capability bindings (plain_text, json, wasm_module, ...),
- * which carry no blast radius.
- */
-const API_BINDING_TYPES: Record<string, BindingType> = {
-  kv_namespace: "kv_namespace",
-  r2_bucket: "r2_bucket",
-  d1: "d1_database",
-  d1_database: "d1_database",
-  hyperdrive: "hyperdrive",
-  service: "service",
-  queue: "queue_producer",
-  browser: "browser",
-  browser_rendering: "browser",
-  ai: "ai",
-  vectorize: "vectorize",
-  mtls_certificate: "mtls_certificate",
-  send_email: "send_email",
-  analytics_engine: "analytics_engine",
-  secret_text: "secret",
-  secrets_store_secret: "secret",
-  dispatch_namespace: "dispatch_namespace",
-  durable_object_namespace: "durable_object",
-};
-
-export function mapApiBinding(raw: RawBinding): DeclaredBinding | undefined {
-  const type = API_BINDING_TYPES[raw.type];
-  if (!type) return undefined;
-  return { type, name: raw.name, configKey: `binding:${raw.name}` };
 }
 
 const DEFAULT_BASE_URL = "https://api.cloudflare.com/client/v4";

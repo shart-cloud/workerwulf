@@ -5,11 +5,19 @@ on:
     branches: [main]
     paths:
       - "packages/cli/**"
+      - "packages/core/**"
+      - "packages/analyze/**"
+      - "packages/analyze-poc/**"
+      - "packages/shared/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/cli.yml"
   pull_request:
     paths:
       - "packages/cli/**"
+      - "packages/core/**"
+      - "packages/analyze/**"
+      - "packages/analyze-poc/**"
+      - "packages/shared/**"
       - "pnpm-lock.yaml"
       - ".github/workflows/cli.yml"
 
@@ -24,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [18, 20] # 18 = the engines floor declared in package.json
+        node: [20, 24] # 20 = the engines floor declared in package.json (oxc-parser needs ^20.19 || >=22.12)
     steps:
       - uses: actions/checkout@v4
 
@@ -35,14 +43,45 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
 
-      - name: Install (cli + its deps only)
-        run: pnpm install --frozen-lockfile --filter @wulf/cli...
+      - name: Install (cli, analyze, core + their deps only)
+        run: pnpm install --frozen-lockfile --filter @wulf/cli... --filter @wulf/analyze... --filter @wulf/core...
 
       - name: Typecheck
-        run: pnpm --filter @wulf/cli typecheck
+        run: pnpm --filter @wulf/core --filter @wulf/analyze --filter @wulf/cli typecheck
 
       - name: Test
-        run: pnpm --filter @wulf/cli test
+        run: pnpm --filter @wulf/core --filter @wulf/analyze --filter @wulf/cli test
+
+  workerd:
+    # The rule engine inside workerd (wrangler dev) must match the CLI byte for byte.
+    name: workerd equivalence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install (analyze-poc + its deps, including the CLI it compares against)
+        run: pnpm install --frozen-lockfile --filter @wulf/analyze-poc...
+
+      - name: Typecheck
+        run: pnpm --filter @wulf/analyze-poc typecheck
+
+      - name: Bundle size (budget 3 MB gzipped)
+        working-directory: packages/analyze-poc
+        run: |
+          pnpm exec wrangler deploy --dry-run --outdir dist | tee bundle.txt
+          gzip_kib=$(grep -o 'gzip: [0-9.]* KiB' bundle.txt | grep -o '[0-9.]*')
+          echo "gzip: ${gzip_kib} KiB"
+          awk -v k="$gzip_kib" 'BEGIN { exit !(k < 3072) }'
+
+      - name: Test (starts wrangler dev)
+        run: pnpm --filter @wulf/analyze-poc test
 
   build:
     name: build & smoke-test

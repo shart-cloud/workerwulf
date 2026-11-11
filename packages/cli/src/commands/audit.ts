@@ -2,8 +2,8 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 
-import { buildBindingMap } from "../ast/binding-map.js";
-import { parse } from "../ast/parse.js";
+import { auditProject, hasHighOrAbove, type Severity } from "@wulf/analyze";
+
 import {
   buildReport,
   renderHuman,
@@ -11,16 +11,9 @@ import {
   totalFindings,
   type FindingGroup,
 } from "../engine/output.js";
-import type { Finding, Severity } from "../engine/rule.js";
-import {
-  atOrAbove,
-  hasHighOrAbove,
-  runConfigRules,
-  runSourceRules,
-} from "../engine/runner.js";
-import { parseWrangler, resolveEnvironments } from "../parsers/wrangler.js";
+import { diskFiles } from "../files.js";
+import { parseWrangler } from "../parsers/wrangler.js";
 import { saveRunReport } from "../report/persist.js";
-import "../rules/index.js";
 
 const CONFIG_NAMES = ["wrangler.toml", "wrangler.json", "wrangler.jsonc"];
 const SKIP_DIRS = new Set([
@@ -116,69 +109,33 @@ export function runAudit(paths: string[], options: AuditOptions): AuditRunResult
       continue;
     }
 
-    // Config rules across every resolved environment, deduped by (rule, resource).
-    const configFindings: Finding[] = [];
-    const seen = new Set<string>();
-    for (const env of resolveEnvironments(parsed.config)) {
-      const outcome = runConfigRules({
-        config: env.config,
-        configPath: rel,
-        envName: env.name,
-      });
-      for (const f of outcome.findings) {
-        const key = `${f.rule_id}::${f.resource}`;
-        if (env.name === "default") {
-          seen.add(key);
-          configFindings.push(f);
-        } else if (!seen.has(key)) {
-          seen.add(key);
-          configFindings.push({ ...f, resource: `${f.resource} [env:${env.name}]` });
-        }
-      }
-    }
-    groups.push({ kind: "config", source: rel, findings: applyIgnore(configFindings, ignore) });
-
-    // Source rules — all relevant project source files, with `main` parsed first.
+    const sources: { path: string; text: () => string }[] = [];
     if (options.source) {
       if (parsed.config.main) {
         const mainPath = resolve(dirname(configPath), parsed.config.main);
         if (!existsSync(mainPath)) notes.push(`Source entry not found for ${rel}: ${parsed.config.main}`);
       }
-      const sourcePaths = discoverSourceFiles(dirname(configPath), parsed.config.main);
-      for (const sourcePath of sourcePaths) {
-        const sourceRel = relative(cwd, sourcePath) || sourcePath;
-        try {
-          const text = readFileSync(sourcePath, "utf8");
-          const source = parse(sourceRel, text);
-          if (source.errors.length > 0) {
-            notes.push(`Parse warnings in ${sourceRel}: ${source.errors.length} (continuing)`);
-          }
-          const bindingMap = buildBindingMap(source);
-          const outcome = runSourceRules({
-            config: parsed.config,
-            configPath: rel,
-            source,
-            bindingMap,
-          });
-          groups.push({
-            kind: "source",
-            source: sourceRel,
-            findings: applyIgnore(outcome.findings, ignore),
-          });
-        } catch (err) {
-          notes.push(`Failed to scan ${sourceRel}: ${(err as Error).message}`);
-        }
+      for (const sourcePath of discoverSourceFiles(dirname(configPath), parsed.config.main)) {
+        sources.push({
+          path: relative(cwd, sourcePath) || sourcePath,
+          text: () => readFileSync(sourcePath, "utf8"),
+        });
       }
     }
+
+    const project = auditProject({
+      configPath: rel,
+      config: parsed.config,
+      sources,
+      files: diskFiles(configPath),
+      ignore,
+      severity: minSeverity,
+    });
+    groups.push(...project.groups);
+    notes.push(...project.notes);
   }
 
-  // Apply the severity threshold to every group.
-  const filteredGroups = groups.map((g) => ({
-    ...g,
-    findings: atOrAbove(g.findings, minSeverity),
-  }));
-
-  const report = buildReport(randomUUID(), new Date().toISOString(), filteredGroups);
+  const report = buildReport(randomUUID(), new Date().toISOString(), groups);
   const all = totalFindings(report);
 
   if (options.save) {
@@ -199,11 +156,6 @@ export function runAudit(paths: string[], options: AuditOptions): AuditRunResult
 
   const exitCode = options.strict && hasHighOrAbove(all) ? 1 : 0;
   return { output, exitCode };
-}
-
-function applyIgnore(findings: Finding[], ignore: Set<string>): Finding[] {
-  if (ignore.size === 0) return findings;
-  return findings.filter((f) => !ignore.has(f.rule_id));
 }
 
 function discoverSourceFiles(root: string, main: string | undefined): string[] {

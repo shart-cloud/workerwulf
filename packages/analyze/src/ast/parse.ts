@@ -1,18 +1,18 @@
 import { parseSync } from "oxc-parser";
 
 /**
- * Loose structural node type. oxc-parser (0.40.x) emits its own native AST
- * (`@oxc-project/types`) — NOT the ESTree shape the PRD assumed. We treat nodes
- * structurally so the engine is resilient to AST drift and so rules don't depend
- * on the full oxc type surface. Every node has a `type` discriminant and byte
- * offsets; other fields are accessed defensively.
+ * Loose structural node type. oxc-parser emits an ESTree-compatible AST (with
+ * TypeScript extensions, as typescript-eslint does). We treat nodes structurally,
+ * so rules don't depend on the full oxc type surface: every node has a `type`
+ * discriminant and `start`/`end` offsets, and other fields are read defensively.
  *
- * Notable oxc node names that differ from ESTree (used by rules):
- *   - `StaticMemberExpression`   (ESTree: MemberExpression, computed=false)  → env.X
- *   - `ComputedMemberExpression` (ESTree: MemberExpression, computed=true)   → env["X"]
- *   - `Literal`                  (string/number/bool literals, has value+raw)
- *   - params live under `FormalParameters.items[].pattern`
- *   - function bodies are `FunctionBody` with a `statements` array
+ * Offsets are UTF-16 code-unit indices, so they index `SourceFile.text` directly.
+ * (oxc 0.40 reported UTF-8 byte offsets, which misplaced every location after a
+ * non-ASCII character.)
+ *
+ * Node-shape details live in `nodes.ts`; rules should use its predicates
+ * (`isStaticMember`, `isObjectLiteralProperty`, `functionParams`, ...) rather
+ * than matching node types directly.
  */
 export interface AstNode {
   type: string;
@@ -26,7 +26,7 @@ export interface SourceLocation {
   line: number;
   /** 1-based column number. */
   column: number;
-  /** Byte offset into the source text. */
+  /** UTF-16 offset into the source text. */
   offset: number;
 }
 

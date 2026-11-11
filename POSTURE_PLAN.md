@@ -1,0 +1,335 @@
+# Workerwulf Posture Platform: Plan
+
+**Status:** Draft. Slice 1 is done on `gorejared/platform-core`; slice 2 is next.
+**Author:** Jared Gore
+**Date:** 2026-11-10
+**Related:** `CLI_PRD.md`, `RULES_PRD.md`, `THREAT_MODEL.md`. This is not `platform_prd.md`, which covers Workerwulf Local, the self-hosted workerd lab on Talos.
+
+---
+
+## 1. Summary
+
+Workerwulf already holds the research that a Cloudflare posture tool needs:
+
+- probe families that show what an attacker can do from inside the runtime;
+- `wulf`, a scanner whose 98 rule IDs each cite the probe that proved the weakness;
+- container Durable Objects that run heavier analyzers.
+
+This plan grows those pieces into a **Cloudflare-native security posture platform**. It runs inside your own Cloudflare account, scans that account on a schedule, and links config, code, identity and data exposure into one graph. It reports *combinations* of weaknesses (toxic combinations), not just single misconfigurations.
+
+The platform is written in **TypeScript on Effect 4** and stores everything on the Cloudflare developer platform: Durable Object SQLite, Workflows, R2 and D1. It does not use DuckDB or corkscrew. Corkscrew stays a separate, multi-cloud, DuckDB-backed project.
+
+The first audience is **your own account**. Open-sourcing comes later, and the design keeps that path open: one deployment per account, nothing hosted, and rules and research shared openly.
+
+## 2. Goals and non-goals
+
+### Goals
+
+1. **Rules backed by evidence.** Every rule cites the probe or research finding that showed the weakness. No rule exists without one, and this is the main difference from generic CSPM rules.
+2. **Coverage is explicit.** A read that was denied or failed is never reported as "secure". Every collection step records `complete`, `denied`, `unavailable` or `failed`, and reports show the gaps.
+3. **Cloudflare-native at runtime.** Workflows run the scans, a Durable Object (SQLite) holds the state and write-ahead log, R2 keeps history, and an Access-protected Worker serves the UI. Nothing runs outside Cloudflare except the optional CLI.
+4. **One rule engine, two runtimes.** The same rule code runs in the Node CLI (`wulf audit` / `wulf scan`) and in a Worker. Rules are pure functions over a snapshot, and only collection is effectful.
+5. **A security graph.** Hostnames, routes, Workers, bindings, data stores, secrets, tokens and Access policies become nodes and edges. Toxic combinations are graph queries.
+6. **Research flows in.** `ProbeResult`s from the harness and scheduled canary probes become findings in the same store. If the platform's behaviour changes under you, a finding opens.
+
+### Non-goals (for now)
+
+- Multi-tenant SaaS. One deployment means one account, which is one trust domain.
+- Remediation that writes to the account. The platform reads only. Fixes are suggested, and IaC pull requests may come later.
+- Replacing Cloudflare's built-in Security Center. We ingest its insights instead of rebuilding them.
+- Changes to the **probe Workers** (`worker`, `durable`, `dynamic-parent`, `platform`, `container`). They measure the runtime from inside the isolate, and adding a framework would skew globals, timing and bundle size. They also back the ISE 5901 practicum, so their code and results stay frozen.
+
+## 3. Where we are today
+
+| Capability | Where | State |
+|---|---|---|
+| Config rules (wrangler) | `packages/cli/src/rules/config` | `WF-CFG`, `WF-BIND`, `WF-EGR`, `WF-WFP` |
+| Source and bundle rules (AST) | `packages/cli/src/rules/source`, `src/ast` (oxc-parser) | Families A–H |
+| Account rules (live API) | `packages/cli/src/rules/account` | `WF-DRIFT-01` (deployed vs local), least privilege (declared vs used bindings), `WF-NS-01..04` (WfP) |
+| Cloudflare API client | `packages/cli/src/cf/client.ts` | `CfClient` interface plus `RestCfClient`. **It swallows errors:** a 403 on settings looks the same as "no bindings". |
+| Finding shape | `packages/cli/src/engine/rule.ts` | `Finding` has no stable identity or lifecycle |
+| Probe results | `packages/shared` (`ProbeResult`) | Plain interface, results kept as JSON files |
+| Analysis store | `packages/harness/src/cmd-analyze.ts` | DuckDB over result files (**to retire**) |
+| Heavy analyzers | `packages/llamafirewall`, `codeshield` | Container Durable Objects running Semgrep with `wulf-rules.yml` |
+
+## 4. Design principles
+
+1. **Rules are pure.** A rule is `(snapshot) => Finding[]`. It does no I/O, takes no clock reading and picks up no ambient config. That is what lets one engine run on Node, in a Worker and in tests.
+2. **Collection is effectful and typed.** Every API call returns `Effect<A, PermissionDenied | NotFound | RateLimited | ApiError>`. Retries, pacing and concurrency are expressed as `Schedule` and `Effect.forEach({ concurrency })`, not hand-rolled.
+3. **Coverage travels with the data.** A collector never turns a failure into an empty value. Either the value is absent and a coverage entry explains why, or the value is present and complete.
+4. **Never store secret values.** Binding values (`plain_text`, `json`, `secret_text`) and Secrets Store material are never persisted. We store derived signals instead: looks-like-credential, pattern name, length. Bundles are stored as a hash plus redacted evidence snippets, never whole. (The rule comes from corkscrew's Cloudflare provider and is enforced by a sentinel test.)
+5. **Stable identity.** Each resource has a deterministic `ResourceRef`. Each finding's key is `(rule_id, resource)`, so findings survive across scans and can be resolved or suppressed.
+6. **Read-only by default.** The platform's own API token gets read permission groups only. The token lives in Secrets Store, and the UI sits behind Access.
+
+## 5. Architecture
+
+```
+                         ┌──────────────────────── your Cloudflare account ────────────────────────┐
+                         │                                                                         │
+ cron / manual ─────────▶│  ScanWorkflow (Workflows)                                               │
+                         │   step: begin ─▶ step: collect/<service>/<chunk> … ─▶ step: complete    │
+                         │        │                │  (Effect collectors over CfApi,               │
+                         │        │                │   paced under 1,200 req / 5 min)              │
+                         │        ▼                ▼                                               │
+                         │  ScanHub Durable Object (SQLite) — one per account                      │
+                         │   ├─ batches        ← write-ahead log, idempotent on (scan_id, batch_no)│
+                         │   ├─ observations   ← current inventory, attrs JSON                     │
+                         │   ├─ edges          ← routes_to / binds / uses / exposes / can_deploy   │
+                         │   ├─ coverage       ← what we could and couldn't see                    │
+                         │   ├─ findings       ← lifecycle: open / resolved / suppressed           │
+                         │   └─ occurrences    ← per-scan evidence                                 │
+                         │        │ complete(): run rules (pure) + graph queries (WITH RECURSIVE)  │
+                         │        │ alarm: export scan to R2 (JSONL/Parquet), prune old batches    │
+                         │        ▼                                                                │
+                         │  R2: history/<scan_id>/…   Console Worker (Access) ◀── you              │
+                         │                                                                         │
+                         │  Analyzer: oxc (WASM) in-Worker for AST rules;                          │
+                         │            codeshield/llamafirewall container Durable Object for Semgrep│
+                         │  Canary Workers: scheduled probe subsets → ProbeResult → ScanHub        │
+                         └─────────────────────────────────────────────────────────────────────────┘
+        wulf CLI (Node) ── same core + rules ── local audit / ad-hoc scan / push results to ScanHub
+```
+
+### Packages
+
+| Package | Status | Contents |
+|---|---|---|
+| `@wulf/core` | **new (slice 1)** | Effect Schemas (`Finding`, `Evidence`, `Severity`, `ProbeResult`, `Coverage`, `AccountSnapshot`); the `CfApi` service and its typed errors; the `CfApiRest` layer (fetch-based, so it runs on Node and Workers); `collectAccount`. No Node APIs. |
+| `@wulf/cli` | evolves | A thin Node shell: commands, file discovery, disk reads and terminal rendering. `@wulf/core` and `@wulf/analyze` are bundled in by tsup, and `effect` is a runtime dependency. |
+| `@wulf/analyze` | **new (slice 2)** | The rule engine, oxc AST helpers, wrangler parsing and report shaping, moved out of `cli/src`. No Node APIs. `auditProject` and `analyzeAccount` are shared by the CLI and the analyzer Worker. |
+| `@wulf/analyze-poc` | slice 2 | The analyzer Worker and its workerd equivalence tests. Its endpoints move into `@wulf/hub` in slice 3. |
+| `@wulf/hub` | new (slice 3) | The `ScanHub` Durable Object, `ScanWorkflow`, SQLite migrations, R2 export and the graph queries |
+| `@wulf/console` | new (slice 6) | Access-protected UI Worker: findings, the graph view, coverage |
+| `@wulf/deploy` | new (slice 6) | Alchemy v2 (Effect) stack: Workflow, Durable Object, R2, Secrets Store, Access app, cron. One command deploys into your own account. |
+| `@wulf/shared` | unchanged until slice 5 | Then `ProbeResult` becomes a type-only re-export from core's Schema, so probe Workers pick up no runtime Effect dependency |
+| `@wulf/harness` | evolves (slice 5) | Posts `ProbeResult`s to ScanHub. `cmd-analyze.ts` (DuckDB) is removed. |
+| probe Workers | **frozen** | No changes |
+
+## 6. Data model
+
+### ResourceRef
+
+`cf:<account_id>/<kind>/<id…>`, deterministic and account-qualified:
+
+| Kind | Ref |
+|---|---|
+| Worker script | `cf:<acct>/workers/<script>` |
+| Binding | `cf:<acct>/workers/<script>/bindings/<name>` |
+| Route | `cf:<acct>/zones/<zone>/routes/<pattern>` |
+| Custom domain | `cf:<acct>/workers/domains/<hostname>` |
+| Zone / DNS record | `cf:<acct>/zones/<zone>`, `…/dns/<record_id>` |
+| R2 / KV / D1 / Queue / DO namespace | `cf:<acct>/r2/<bucket>`, `/kv/<id>`, `/d1/<id>`, `/queues/<id>`, `/do/<id>` |
+| Secrets Store secret | `cf:<acct>/secrets/<store>/<secret>` |
+| API token / member | `cf:<acct>/tokens/<id>`, `cf:<acct>/members/<id>` |
+| Access app / policy | `cf:<acct>/access/apps/<id>`, `…/policies/<id>` |
+| WfP namespace | `cf:<acct>/dispatch/<namespace>` |
+
+In the CLI, `Finding.resource` keeps its human-readable form (`script:prey`, `wrangler.toml`). ScanHub stores the `ResourceRef` alongside it.
+
+### Core records
+
+- **Observation:** `{ scan_id, ref, kind, attrs (JSON), observed_at }`. Never modified after it is written. Latest-known inventory is a view.
+- **Edge:** `{ scan_id, from_ref, to_ref, kind }` where `kind ∈ routes_to | binds | uses | exposes | can_deploy | stores`.
+- **Coverage:** `{ scan_id, target, op, status: complete | denied | unavailable | failed, detail }`.
+- **Finding:** `{ key = rule_id|ref, rule_id, probe, family, severity, ref, title, state: open | resolved | suppressed, first_seen, last_seen }`.
+- **Occurrence:** `{ finding_key, scan_id, message, remediation, evidence[] }`.
+- **Scan:** `{ scan_id, started_at, completed_at, status: running | complete | partial | failed }`. A scan with any `failed` coverage is `partial`, and a partial scan **never auto-resolves findings**.
+
+## 7. Storage (ScanHub SQLite)
+
+```sql
+CREATE TABLE scans        (scan_id TEXT PRIMARY KEY, started_at TEXT, completed_at TEXT, status TEXT);
+CREATE TABLE batches      (scan_id TEXT, batch_no INTEGER, payload TEXT, received_at TEXT,
+                           PRIMARY KEY (scan_id, batch_no));              -- WAL; pruned after export
+CREATE TABLE observations (scan_id TEXT, ref TEXT, kind TEXT, attrs TEXT, PRIMARY KEY (scan_id, ref));
+CREATE TABLE edges        (scan_id TEXT, from_ref TEXT, to_ref TEXT, kind TEXT,
+                           PRIMARY KEY (scan_id, from_ref, to_ref, kind));
+CREATE TABLE coverage     (scan_id TEXT, target TEXT, op TEXT, status TEXT, detail TEXT);
+CREATE TABLE findings     (key TEXT PRIMARY KEY, rule_id TEXT, probe TEXT, family TEXT, severity TEXT,
+                           ref TEXT, title TEXT, state TEXT, first_seen TEXT, last_seen TEXT,
+                           suppressed_reason TEXT);
+CREATE TABLE occurrences  (finding_key TEXT, scan_id TEXT, message TEXT, remediation TEXT, evidence TEXT,
+                           PRIMARY KEY (finding_key, scan_id));
+```
+
+- **Write path:** a Workflow step calls `append(scan_id, batch_no, batch)`, which does `INSERT … ON CONFLICT DO NOTHING`. Workflow step retries are therefore safe.
+- **Complete:** `complete(scan_id)` folds the batches into observations, edges and coverage. It then builds the `AccountSnapshot`, runs the pure rules and the graph queries, upserts findings, and, unless the scan is partial, resolves open findings that weren't seen. The last step schedules an alarm.
+- **Alarm:** writes `history/<scan_id>/{observations,edges,findings,coverage}.jsonl` to R2, prunes batches, and keeps observations for the last N scans (default 10).
+- **Size:** a single account's graph is thousands of rows, well within Durable Object SQLite limits. D1 is only needed if a cross-account view ever exists.
+
+## 8. Collection coverage roadmap
+
+| Priority | Service | Gives us |
+|---|---|---|
+| P0 (slice 1, current) | Workers scripts, settings and bindings, script content, routes, WfP namespaces | Feature parity with `wulf scan` |
+| P1 | workers.dev subdomain and `previews_enabled`, custom domains, zone routes, cron triggers, observability/logpush | Exposure edges (`exposes`, `routes_to`) |
+| P1 | R2 (r2.dev and custom domains, CORS), KV, D1, Queues, DO namespaces, Hyperdrive (origin host only), Secrets Store (metadata only) | Data stores, binding resolution (dangling binding detection) |
+| P2 | Zones and settings (min TLS, Always HTTPS, HSTS), DNSSEC, DNS records (DNS-only records that reveal an origin, dangling CNAMEs), rulesets/WAF | Zone baseline, origin bypass |
+| P2 | Access apps, policies, identity providers, service tokens; Tunnels and their public hostnames | Identity and exposure for Zero Trust |
+| P3 | API tokens (permission groups, expiry, IP filters), account members and roles, Audit Logs | `can_deploy` edges, identity drift, detections |
+| P3 | Security Center insights, leaked-credential checks, Page Shield | Cloudflare's own findings, ingested as another source |
+| P4 | AI Gateway (logging config), Vectorize, Workers AI usage, Agents/MCP behind Access | AI surface |
+
+Each collector is an Effect function `collectX: Effect<Batch, never, CfApi>`. Failures go into the batch's coverage entries; the collector itself does not fail.
+
+## 9. Rules and toxic combinations
+
+Single-resource rules continue the existing families (A–H). New graph rules are queries over `edges` and `observations`. Each one cites the probe that makes it more than theory:
+
+| ID (proposed) | Path | Evidence |
+|---|---|---|
+| `WF-TOX-01` | public entry (`workers.dev`, preview URL, route) → Worker → binding → data store holding sensitive data | `W-BND`, `W-CAP` |
+| `WF-TOX-02` | Worker on workers.dev **and** on a route that has Access/WAF, so the controls can be bypassed | Track 1 network probes |
+| `WF-TOX-03` | Worker with a preview URL → Hyperdrive bound to a production origin | `W-CAP-01` (Hyperdrive), wave 2 |
+| `WF-TOX-04` | DNS-only record sharing the origin IP of a proxied host, with no Authenticated Origin Pulls or Tunnel | P2 collectors |
+| `WF-TOX-05` | Tunnel public hostname with no Access app | P2 collectors |
+| `WF-TOX-06` | route naming a missing script, or CNAME to a deprovisioned target (takeover) | corkscrew `CF.WRK.05` analogue |
+| `WF-TOX-07` | token with Workers edit + no expiry + no IP filter → `can_deploy` → Worker holding prod bindings | P3 collectors |
+| `WF-TOX-08` | DO class whose source builds SQL from request input → DO namespace bound by a publicly routed Worker | `D-DO` SQLi probes |
+| `WF-TOX-09` | Dynamic Worker Loader host that grants user-generated code bindings beyond an allowlist | `W-DYN`, `AI-INJ` |
+
+Graph rules run as SQLite `WITH RECURSIVE` queries inside ScanHub, with cycle guards and a depth cap of 6.
+
+## 10. Research integration
+
+- **ProbeResult as a source of findings.** `harness` posts `ProbeResult`s to ScanHub (`/ingest/probe`). A probe with verdict `accessible` and severity ≥ medium opens a `WF-PROBE-<test_id>` finding against the target ref.
+- **Canary Workers.** A scheduled subset of the safe, read-only probes (`W-ENV`, `W-NET`, `W-BND` discovery) runs in the account. If an observed boundary changes, for example an egress that used to be blocked now succeeds, a finding opens. This turns the research into regression tests on the platform itself.
+- **Rule provenance.** `wulf report --matrix` already maps rules to probes. The console shows the same matrix, linking each finding to its probe write-up.
+
+## 11. Security of the platform itself
+
+- **API token.** Read-only permission groups. It is stored in Secrets Store and bound to the Workflow Worker only. `wulf scan --print-scopes` (slice 4) prints exactly the groups a scan needs.
+- **The console** sits behind an Access application. There is no public route, and `workers_dev = false` and `preview_urls = false` on every platform Worker. Rule `WF-BIND`/`WF-EGR` checks run against the platform's own config in CI.
+- **Bundles.** Script content is analysed in memory. Only its SHA-256 and redacted evidence snippets of at most 200 characters, with secret patterns masked, are stored. A sentinel test asserts that no binding value appears in any persisted row.
+- **Ingest.** `/ingest/probe` takes a separate token from the console's Access session. The harness and canaries cannot read findings.
+- **Adversarial content.** Evidence such as script names, bundle strings and DNS comments is attacker-controllable and rendered as text only. The console must never interpret it, and any LLM-assisted triage added later treats it as untrusted data.
+
+## 12. Phases
+
+Each slice ends with the repo green (`pnpm -r typecheck`, all tests) and the CLI working as before.
+
+### Slice 1: `@wulf/core` and a coverage-aware `wulf scan` (this branch)
+
+- `packages/core`:
+  - `Severity`, `Evidence`, `Finding` and `ProbeResult` as Effect Schemas.
+  - `findingKey`.
+  - Typed errors: `PermissionDenied`, `NotFound`, `RateLimited`, `ApiError`.
+  - The `CfApi` service, plus `CfApiRest` (fetch, URL-encoded path segments, status → error mapping, retry on 429/5xx with exponential backoff) and `CfApi.fromPromises` (adapter for promise-shaped clients, so existing fakes keep working).
+  - `collectAccount`, which returns an `AccountSnapshot` with per-operation `Coverage` and fetches script details with concurrency 4.
+- `packages/cli`:
+  - `Finding`, `Severity` and `Evidence` types come from core.
+  - `wulf scan` collects through core and prints coverage gaps as notes; JSON output gains an additive `coverage` array.
+  - `RestCfClient` stays exported (it's used by tests and the public API) but is no longer used by `scan`.
+  - tsup bundles `@wulf/core`, and `effect` is added as a dependency.
+- Tests:
+  - core unit tests for error mapping, retry, coverage and the snapshot shape;
+  - a type-level check that the core `ProbeResult` schema matches `@wulf/shared`'s interface;
+  - the existing 36 CLI tests unchanged and passing;
+  - a new CLI test showing a denied bindings read appears as a coverage note.
+- **Exit:** `wulf scan` gives the same findings as before against the fakes, and a 403 now shows up as a coverage gap instead of a silent pass.
+- **Result (2026-11-10): done.**
+  - Tests: `@wulf/core` 20, `@wulf/cli` 41 (the original 36 unchanged, plus 5 new for coverage). All pass on Node 18 and current Node.
+  - The `ProbeResult` compatibility check fails `tsc` if `@wulf/shared` drifts.
+  - CI (`.github/workflows/cli.yml`) now typechecks and tests core too.
+  - The CLI bundle grew from 137 KB to 146 KB, with `effect` external.
+  - **Follow-up:** check `GET /accounts/{id}/workers/scripts/{name}/routes` against the OpenAPI spec. If it isn't a real endpoint, every script will report `routes: unavailable`, and route collection should move to zone routes plus custom domains in slice 4.
+
+### Slice 2: the rule engine runs in workerd
+
+- Split Node-only code (fs and path in `parsers/wrangler.ts`, `report/*`, the `_utils` file reads) away from the pure rule and AST code. Move the pure parts to `@wulf/analyze`.
+- Prove that oxc-parser runs in a Worker (`oxc-parser` WASM build, or `@oxc-parser/wasm`), with a bundle-size budget of 3 MB gzipped for the analyzer Worker. If that fails, fall back to the codeshield container for AST analysis.
+- **Exit:** a `wrangler dev` test Worker runs every account and source rule against a fixture snapshot, and its output matches the CLI byte for byte.
+- **Parser proof of concept (2026-11-10): passed.** See `packages/analyze-poc/README.md`.
+  - **First pass:** used the deprecated `@oxc-parser/wasm@0.40.1`. It matched the CLI on every fixture but tied us to an unmaintained package, so it was replaced the same day.
+  - **oxc-parser upgraded from 0.40.1 to 0.158.0** (`@wulf/cli`):
+    - 0.158 emits ESTree. The AST helpers and rules now go through `src/ast/nodes.ts` (`isStaticMember`, `isMemberAccess`, `isObjectLiteralProperty`, `functionParams`). Those keep 0.40's semantics exactly: private fields aren't member access, destructuring properties aren't object-literal properties, and the TS `this` and rest parameters are skipped.
+    - **Fixes a location bug.** 0.40 reported UTF-8 *byte* offsets that the CLI used as string indices, so every finding after a non-ASCII character had the wrong line and evidence text. Across the test corpus that was 6,585 findings, including 5 in the `families` fixture.
+    - **Regression check:** `wulf audit --source --json` over 18 projects (the CLI fixtures, every workerwulf Worker package, and four voidmoon-io Workers). On 0.158 the 10,345 findings are **byte-identical** to a 0.40 baseline whose offsets were mechanically converted to UTF-16. No rule's behaviour changed.
+    - New `test/ast.test.ts` pins the offset fix and the ESTree edge cases. CLI tests: 46.
+    - oxc-parser 0.158 needs Node `^20.19.0 || >=22.12.0`, so the CLI's `engines`, its tsup target and the CI matrix (now 20 and 24) moved off Node 18, which reached end of life in April 2025.
+  - **Worker:** a wrangler `alias` points `oxc-parser` at oxc's official workerd build (`@oxc-parser/binding-wasm32-wasip1/workerd`, same version), wrapped with oxc's own `wrap`. The CLI's parser, rules and report code run in workerd unchanged. The only other CLI change is `parseWranglerText` split out of `parseWrangler`.
+  - **AST:** the workerd WASM build and the native binding are **identical across 274 files** (1.5 MB), with no exceptions, both in Node and over HTTP from workerd.
+  - **Findings:** for all 7 CLI fixtures, the Worker under `wrangler dev` deep-equals `wulf audit --source --json`. That's 66 findings, with the 5 supply-chain `WF-SC-*` findings excluded because they read files from disk.
+  - **Size:** 658 KiB gzipped (WASM 501 KiB, JS 165 KiB), against the 3 MB budget.
+  - **CPU:** a 356 KB bundle takes about 119 ms round trip in `wrangler dev`. That's fine on Workers Paid and in Workflow steps, but large bundles exceed the Free plan's 10 ms CPU limit.
+  - The WASM module requires **64 MiB minimum** linear memory (1024 declared pages; it refuses less). Measured on a real deployment below.
+- **Result (2026-11-11): done.**
+  - **`@wulf/analyze`** (new, private) holds the AST helpers, wrangler parsing, the rule registry and runner, report shaping, and every rule. It uses no Node APIs. Two pure entry points carry the whole pipeline: `auditProject` (one config, its sources and nearby files → finding groups and notes) and `analyzeAccount` (an `AccountSnapshot` → groups, coverage gaps and rule errors). The CLI is now a Node shell: discovery, disk reads, terminal rendering and `wulf report`. tsup bundles analyze into the CLI the same way as core.
+  - **Supply-chain rules** read through a `ProjectFiles` interface (`read`, `existsUp`, `list`, `display`). The CLI backs it with the disk (`diskFiles`), and the Worker with files sent in the request (`memoryFiles`).
+  - **`AccountSnapshot`** in core gained an Effect Schema, so the Worker decodes posted snapshots. Binding entries keep only `type` and `name`, which drops binding values at the edge.
+  - **No behaviour change in the CLI:** across 21 projects (the CLI fixtures, every workerwulf Worker package, and four voidmoon-io Workers), the JSON output's 10,345 findings and the human-readable output are byte-identical to the previous commit.
+  - **Exit criterion met.** Under `wrangler dev`:
+    - every CLI fixture posted to `/analyze` returns the same report text as `wulf audit --source --json` (66 findings, supply-chain included);
+    - a canned account that fires all seven account rules and has two coverage gaps returns the same report text from `/scan` as `wulf scan --json`.
+    - As a one-off, 16 real projects also matched byte for byte.
+  - The Worker drops `nodejs_compat`. The bundle is 661 KiB gzipped and starts in 29 ms. CI (`.github/workflows/cli.yml`) now typechecks and tests analyze, runs the workerd equivalence suite, and fails if the bundle exceeds 3 MB gzipped.
+  - **Measured on a real deployment** (temporary, bearer-token gated, deleted afterwards):
+    - About **1.5 MB of JavaScript per parse** is safe: a 1.47 MB bundle took 582 ms CPU and left 104 MiB of WASM memory.
+    - A 3.44 MB bundle responded, then the isolate was killed for exceeding memory. A 5.7 MB bundle failed to grow memory, and a 25 MB bundle hit the resource limit.
+    - WASM memory grows to fit the largest file and never shrinks, so one large parse costs the isolate that memory for life.
+    - CPU is 0.15–0.4 ms per KB, so even small bundles exceed the Free plan's 10 ms. The analyzer needs Workers Paid or a Workflow step.
+  - **Carried into slice 3:**
+    - Route bundles above about 1.5 MB to a Container, and record anything not analysed as a coverage entry. Today a file that fails to parse is only a note.
+    - Consider recycling the isolate after a large parse.
+    - `wrangler.json(c)` with trailing commas fails to parse in both the CLI and the Worker, which silently skips that config. voidmoon-io's `site/lab` is one example.
+
+### Slice 3: ScanHub and ScanWorkflow
+
+- `@wulf/hub`: the Durable Object with the SQLite migrations from §7 and `begin/append/complete`; the Workflow with one step per collector chunk; the R2 export alarm.
+- Findings lifecycle (open, resolved, suppressed). A partial scan never resolves anything.
+- `wulf scan --push <hub-url>` sends a CLI scan to ScanHub.
+- **Exit:** a cron scan of the research account produces the same findings as `wulf scan`, keeps their identity across two scans, and resolves a finding after the misconfiguration is fixed.
+
+### Slice 4: exposure and data-store graph
+
+- P1 collectors, the edges table filled in, dangling-binding detection, `WF-TOX-01..03` and `-06`.
+- `wulf scan --print-scopes`.
+- **Exit:** a seeded fixture account produces each TOX finding, and so does at least one real misconfiguration in the research account.
+
+### Slice 5: research ingest and canaries
+
+- `ProbeResult` moves into core's Schema, and `@wulf/shared` re-exports it as types only.
+- `harness` posts to ScanHub. DuckDB (`cmd-analyze.ts`) is removed and replaced by `wulf report` queries against ScanHub.
+- Canary Worker with a scheduled probe subset.
+- **Must happen after the practicum results freeze.**
+
+### Slice 6: console and deploy
+
+- `@wulf/console`: findings, coverage, graph path view, rule ↔ probe matrix, behind Access.
+- `@wulf/deploy`: an Alchemy v2 stack, so `pnpm deploy` stands up the whole platform in your own account.
+
+### Slice 7 and later
+
+P2–P4 collectors, zone baseline, Access and Tunnels, identity (`can_deploy`), Audit Log detections, ingesting Security Center, the AI surface, IaC-ownership findings (unmanaged objects, drift from declared Terraform/wrangler), and suggested fixes as PRs.
+
+## 13. Risks and open questions
+
+| Risk | Mitigation |
+|---|---|
+| oxc-parser in workerd: WASM size and loading | Measured in slice 2: 661 KiB gzipped, but a single parse is safe only up to about 1.5 MB of JavaScript. Larger bundles go to a Container, and anything skipped is recorded as coverage. |
+| Effect 4 bundle size in Workers | Measure in slice 2. Import from `effect/<Module>` paths and keep collectors tree-shakable |
+| Workflow step limits and payload size | Chunk collectors (4 scripts/step). Batches carry no bundle content, only derived data |
+| Cloudflare API rate limit (1,200 req / 5 min) | `Schedule`-based pacing in `CfApiRest`, retrying 429s with backoff, concurrency 4 |
+| Some endpoints differ from what `wulf` assumes (e.g. per-script routes) | Coverage `unavailable` makes it visible. Verify each endpoint against the OpenAPI spec as collectors are added |
+| Churn in practicum-cited code | Probe Workers are frozen. `shared` changes only in slice 5, after the freeze |
+| Effect learning curve for contributors | Rules stay plain functions, so Effect is only needed in collectors and the hub |
+
+**Open questions**
+
+1. ~~Should `@wulf/analyze` and `@wulf/core` be one package?~~ Kept separate (slice 2). Core is the data contract and collection, and analyze depends on it. Both bundle into the CLI, and the Worker's size is dominated by the oxc WASM, not by either package.
+2. Should history in R2 be JSONL or Parquet? JSONL is the default. Revisit when queries over history become a real need. R2 SQL / Data Catalog is optional and only arrives with Parquet.
+3. When open-sourcing, under what name, and should the platform live in this repo or a new one? The research repo stays academic, so a likely split is `workerwulf` (research) and a separate platform repo, with rules/probe IDs shared.
+4. Should the platform's own token be minted per scan (short-lived, Vault-style) or stay a long-lived read-only token in Secrets Store?
+
+## 14. Decisions
+
+| Date | Decision |
+|---|---|
+| 2026-11-10 | TypeScript on **Effect 4** (not Rust). Rust only shows up as WASM modules (oxc). |
+| 2026-11-10 | No DuckDB and no corkscrew dependency. Durable Object SQLite is the store and WAL, and R2 holds history. |
+| 2026-11-10 | Probe Workers are frozen. Effect goes into `core`, `cli`, `hub`, `harness` and `console` only. |
+| 2026-11-10 | Coverage is part of the data model: failures are never turned into empty values. |
+| 2026-11-10 | One deployment per account. No multi-tenant SaaS. |
+| 2026-11-10 | Track current oxc-parser (0.158, ESTree) and use its official workerd build. Rules use `packages/analyze/src/ast/nodes.ts` instead of matching node types directly. |
+| 2026-11-11 | One analysis pipeline for every runtime. `@wulf/analyze` takes text in and returns findings, and the CLI only adds disk access and rendering, so CLI and Worker results are equal by construction and checked byte for byte in CI. |
+| 2026-11-11 | In-Worker AST analysis is capped at about 1.5 MB per bundle, as measured on a real deployment. Larger bundles go to a Container, never silently skipped. |
