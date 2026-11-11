@@ -126,12 +126,12 @@ npx tsx src/index.ts audit . --severity medium --ignore WF-BIND-03
 
 ## Implementation notes
 
-- **oxc-parser AST shape.** This package targets `oxc-parser@0.40.1` (pinned),
-  which emits the **oxc-native** AST (`StaticMemberExpression`,
-  `ComputedMemberExpression`, `ObjectProperty`, `FunctionBody.statements`), *not*
-  the ESTree shape the PRD's examples assumed. The walker is generic over node
-  shape and rules target the real node names; see `src/ast/parse.ts`. Pin the
-  version before upgrading — the AST can change between releases (PRD §17).
+- **oxc-parser AST shape.** The rule engine lives in `@wulf/analyze`
+  (`packages/analyze`, bundled into this CLI) and targets `oxc-parser@0.158.0`
+  (pinned), which emits ESTree with UTF-16 offsets. Rules go through the
+  predicates in `packages/analyze/src/ast/nodes.ts` rather than matching node
+  shapes directly. Pin the version before upgrading, since the AST can change
+  between releases (PRD §17).
 - **Single parse, focused passes.** Each source file is parsed once. The binding
   map is built in its own pass; source rules currently walk the shared AST per
   rule (cheap for Worker-sized files). Collapsing to a single dispatched walk is

@@ -6,5 +6,5 @@
     "types": ["node"],
     "noEmit": true
   },
-  "include": ["test/**/*", "src/oxc-shim.node.ts", "src/oxc-loader.ts", "src/analyze.ts", "src/oxc.d.ts"]
+  "include": ["test/**/*", "src/oxc-shim.node.ts", "src/oxc-loader.ts", "src/oxc.d.ts"]
 }

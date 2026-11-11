@@ -43,6 +43,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@wulf/analyze": "workspace:*",
     "@wulf/core": "workspace:*",
     "tsup": "^8.3.0",
     "tsx": "^4.19.0",

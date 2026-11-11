@@ -4,21 +4,23 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { describe, expect, it } from "vitest";
 
-import { parse } from "../src/ast/parse.js";
-import { buildBindingMap } from "../src/ast/binding-map.js";
 import {
+  buildBindingMap,
   calleeMemberPath,
+  declaredBindings,
+  findNodes,
   isMutableContainer,
   isStringConcat,
   isSuccessValue,
   isTimingUnsafeComparison,
   looksLikeSecret,
+  parse,
   referencesRequestInput,
+  secretBindingNames,
   templateHasExpressions,
-} from "../src/ast/patterns.js";
-import { findNodes } from "../src/ast/walk.js";
+} from "@wulf/analyze";
+
 import { parseWrangler, resolveEnvironments } from "../src/parsers/wrangler.js";
-import { declaredBindings, secretBindingNames } from "../src/parsers/bindings.js";
 import { runAudit } from "../src/commands/audit.js";
 
 const here = dirname(fileURLToPath(import.meta.url));

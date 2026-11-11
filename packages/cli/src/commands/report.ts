@@ -9,7 +9,7 @@ import {
   type HarnessProbe,
 } from "../report/matrix.js";
 import { loadRunReports } from "../report/persist.js";
-import "../rules/index.js";
+import "@wulf/analyze";
 
 export interface ReportOptions {
   resultsDir?: string;

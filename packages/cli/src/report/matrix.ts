@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { allRules, type RuleSummary } from "../engine/rule.js";
+import { allRules, type RuleSummary } from "@wulf/analyze";
 
 /** A probe id + short description, ingested from harness results. */
 export interface HarnessProbe {

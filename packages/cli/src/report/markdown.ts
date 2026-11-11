@@ -1,4 +1,4 @@
-import type { Severity } from "../engine/rule.js";
+import type { Severity } from "@wulf/analyze";
 import type { AggregateResult } from "./aggregate.js";
 
 const SEVERITY_ORDER: Severity[] = ["critical", "high", "medium", "low", "informational"];

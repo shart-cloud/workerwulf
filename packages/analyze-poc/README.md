@@ -1,15 +1,25 @@
 # @wulf/analyze-poc
 
-Proof of concept for `POSTURE_PLAN.md` slice 2: can the `wulf` rule engine and its oxc parser run inside workerd, and give exactly the CLI's results?
+The analyzer Worker for `POSTURE_PLAN.md` slice 2. It runs `@wulf/analyze`, the same rule engine the `wulf` CLI uses, inside workerd, and its tests show the results match the CLI's byte for byte.
 
-**Answer: yes, on oxc-parser's official workerd build.** This package is local-only and is never deployed (`workers_dev` and `preview_urls` are both off).
+It is never deployed from this config: `workers_dev` and `preview_urls` are both off. The memory measurements below came from a temporary, token-gated deploy that was deleted afterwards.
 
 ## How it works
 
-- The CLI uses `oxc-parser@0.158.0` (native binding in Node). In the Worker, `wrangler.jsonc` aliases `oxc-parser` to `src/oxc-shim.worker.ts`. The shim loads the **same version's** official workerd build, `@oxc-parser/binding-wasm32-wasip1/workerd`. The `.wasm` compiles to a `WebAssembly.Module` at build time, and one instance is created per isolate when the module loads.
+- `@wulf/analyze` holds the rules, the oxc AST helpers and wrangler parsing, and uses no Node APIs. The CLI and this Worker both call its `auditProject` and `analyzeAccount`, so there is one code path. The Worker needs no `nodejs_compat`.
+- `@wulf/analyze` imports `oxc-parser`. In the Worker, `wrangler.jsonc` aliases that to `src/oxc-shim.worker.ts`, which loads the **same version's** official workerd build, `@oxc-parser/binding-wasm32-wasip1/workerd`. The `.wasm` compiles to a `WebAssembly.Module` at build time, and one instance is created per isolate.
 - `src/oxc-loader.ts` wraps the WASM binding with `oxc-parser`'s own result wrapper (`src-js/wrap.js`), so `parseSync` returns exactly what the native binding returns.
-- `src/analyze.ts` is `wulf audit --source` without a filesystem: config text and source files come in as strings. It imports the CLI's parser, rules, runner and report code **unchanged**.
-- `src/worker.ts` exposes `POST /analyze` (returns findings) and `POST /parse` (returns the raw AST).
+
+## Endpoints
+
+| Endpoint | Body | Returns |
+|---|---|---|
+| `POST /analyze` | `configPath`, `configText`, `sources` (path and text, in scan order), `files` (path → text next to the config, ancestors as `../`), optional `severity`, `ignore` | `{ report, notes }`, the same report `wulf audit --json` prints |
+| `POST /scan` | `snapshot` (an `AccountSnapshot`, decoded with core's Schema), optional `localSources` (script name → path and text), `severity`, `ignore` | `{ report, notes }`, the same report `wulf scan --json` prints, coverage included |
+| `POST /parse` | `path`, `text` | the raw AST, or sizes only with `?summary=1` |
+| `GET /memory` | | the isolate's current WASM memory |
+
+When the `WULF_TOKEN` secret is set, every request needs `Authorization: Bearer <token>`.
 
 ## What the tests prove
 
@@ -17,28 +27,35 @@ Proof of concept for `POSTURE_PLAN.md` slice 2: can the `wulf` rule engine and i
 
 | Test | Checks |
 |---|---|
-| `ast-equivalence` | The workerd WASM build against the native binding, over 274 files (every package's TS plus Effect's large JS bundles). The AST and diagnostics are **identical, with no exceptions**. |
-| `workerd`: findings | Starts `wrangler dev`, posts each CLI fixture to `/analyze`, and deep-compares the result with `wulf audit . --source --json` run by the real CLI. Supply-chain `WF-SC-*` findings are excluded, because they read files from disk. |
+| `ast-equivalence` | The workerd WASM build against the native binding, over 281 files (every package's TS plus Effect's large JS bundles). The AST and diagnostics are **identical, with no exceptions**. |
+| `workerd`: audit | Starts `wrangler dev`, posts each CLI fixture (config, sources and every other file, plus ancestor lockfiles) to `/analyze`, and compares the report with `wulf audit . --source --json` from the real CLI **as JSON text**, minus run id and timestamp. All 66 findings match, the 5 supply-chain ones included. |
+| `workerd`: scan | The CLI scans a canned account (`test/account-fixture.ts`) that fires every account rule and has two coverage gaps. The Worker gets the same account as a snapshot and must return the same report text. A malformed snapshot gets a 400. |
 | `workerd`: AST | The AST returned over HTTP from workerd equals the native AST for every fixture source |
 | `workerd`: bundle | A 356 KiB real bundle parses in workerd with no errors |
 
-## Numbers
+As a one-off, the Worker also matched the CLI byte for byte on 16 real projects: every workerwulf Worker package and the CLI fixtures.
 
-| | |
-|---|---|
-| Bundle | 2,398 KiB raw / **658 KiB gzipped** (WASM 501 KiB, JS 165 KiB including the napi/WASI runtime) |
-| Parse, 356 KiB bundle | about 119 ms round trip in `wrangler dev` |
-| WASM memory | **64 MiB minimum.** The module declares 1024 initial pages and refuses less. It grew to 84 MiB after 20 parses of a 356 KiB bundle and does not shrink. |
+## Numbers from a real deployment (2026-11-11)
 
-## Risks
+| Bundle | Size | CPU time | WASM memory after | Outcome |
+|---|---|---|---|---|
+| (idle isolate) | | | 64 MiB | |
+| Effect `Schema.js`, first parse | 0.35 MB | 143 ms | 72 MiB | ok |
+| Effect `Schema.js`, nine more | 0.35 MB | 45–73 ms | 78 MiB | ok, no further growth |
+| a 1.5 MB Worker bundle | 1.47 MB | 582 ms | 104 MiB | ok |
+| a 3.4 MB Worker bundle | 3.44 MB | 1,450 ms | 141 MiB | responded, then the isolate was killed: `exceededMemory` |
+| a 5.7 MB bundle | 5.74 MB | | 226 MiB | `RangeError: Invalid array buffer length` |
+| `typescript.js` | 8.72 MB | | 139 MiB | oxc panicked (`unreachable`) |
+| a 25 MB bundle | 25.3 MB | | | 503, Worker exceeded resource limits |
 
-- **Memory.** A 64–84 MiB WASM heap sits inside a Worker's 128 MB isolate limit, alongside the JS heap holding the AST. `wrangler dev` doesn't enforce the limit, so headroom has to be measured on a real deployment. If it's too tight, bundle analysis moves to a Container.
-- **CPU.** Large bundles exceed the Free plan's 10 ms CPU limit; they need Workers Paid or a Workflow step.
+- **Bundle size:** 661 KiB gzipped (WASM 501 KiB), against the 3 MB budget. CI fails above it. Startup time is 29 ms.
+- **Memory ceiling:** about **1.5 MB of JavaScript per parse** is safe. WASM memory starts at 64 MiB, grows with the largest file parsed and never shrinks, so one big parse costs the isolate that memory for life. A 3.4 MB bundle already pushes past the 128 MB limit.
+- **CPU:** 0.15–0.4 ms per KB of source, rising with size. Even small bundles exceed the Free plan's 10 ms, so the analyzer needs Workers Paid (30 s of CPU per request by default) or a Workflow step.
 
 ## Known gaps
 
-- Supply-chain rules need file text passed in, not disk reads.
-- Account rules (`WF-PRIV`, `WF-DRIFT`, `WF-NS`) aren't exercised here yet.
+- A file the Worker can't parse becomes a note, as in the CLI, but it isn't yet recorded in the report's coverage. Slice 3 should make "too large to analyze in a Worker" a coverage entry and send those bundles to a Container.
+- `wrangler dev` doesn't enforce the memory limit, so only a real deployment catches the ceiling above.
 
 ## Run
 

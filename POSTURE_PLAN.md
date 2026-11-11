@@ -95,8 +95,9 @@ The first audience is **your own account**. Open-sourcing comes later, and the d
 | Package | Status | Contents |
 |---|---|---|
 | `@wulf/core` | **new (slice 1)** | Effect Schemas (`Finding`, `Evidence`, `Severity`, `ProbeResult`, `Coverage`, `AccountSnapshot`); the `CfApi` service and its typed errors; the `CfApiRest` layer (fetch-based, so it runs on Node and Workers); `collectAccount`. No Node APIs. |
-| `@wulf/cli` | evolves | A thin Node shell: commands, file discovery and rendering. Its rules and AST engine move toward core-compatible pure modules (slice 2). `@wulf/core` is bundled in by tsup, and `effect` becomes a runtime dependency. |
-| `@wulf/analyze` | new (slice 2) | The rule engine plus oxc AST, moved out of `cli/src` once it runs in workerd. Possibly folded into core if bundle size allows. |
+| `@wulf/cli` | evolves | A thin Node shell: commands, file discovery, disk reads and terminal rendering. `@wulf/core` and `@wulf/analyze` are bundled in by tsup, and `effect` is a runtime dependency. |
+| `@wulf/analyze` | **new (slice 2)** | The rule engine, oxc AST helpers, wrangler parsing and report shaping, moved out of `cli/src`. No Node APIs. `auditProject` and `analyzeAccount` are shared by the CLI and the analyzer Worker. |
+| `@wulf/analyze-poc` | slice 2 | The analyzer Worker and its workerd equivalence tests. Its endpoints move into `@wulf/hub` in slice 3. |
 | `@wulf/hub` | new (slice 3) | The `ScanHub` Durable Object, `ScanWorkflow`, SQLite migrations, R2 export and the graph queries |
 | `@wulf/console` | new (slice 6) | Access-protected UI Worker: findings, the graph view, coverage |
 | `@wulf/deploy` | new (slice 6) | Alchemy v2 (Effect) stack: Workflow, Durable Object, R2, Secrets Store, Access app, cron. One command deploys into your own account. |
@@ -251,8 +252,26 @@ Each slice ends with the repo green (`pnpm -r typecheck`, all tests) and the CLI
   - **Findings:** for all 7 CLI fixtures, the Worker under `wrangler dev` deep-equals `wulf audit --source --json`. That's 66 findings, with the 5 supply-chain `WF-SC-*` findings excluded because they read files from disk.
   - **Size:** 658 KiB gzipped (WASM 501 KiB, JS 165 KiB), against the 3 MB budget.
   - **CPU:** a 356 KB bundle takes about 119 ms round trip in `wrangler dev`. That's fine on Workers Paid and in Workflow steps, but large bundles exceed the Free plan's 10 ms CPU limit.
-  - **Open risk, memory:** the WASM module requires **64 MiB minimum** linear memory (1024 declared pages; it refuses less). It grew to 84 MiB after 20 large parses and never shrinks, all inside a 128 MB isolate. `wrangler dev` doesn't enforce the limit, so headroom must be measured on a real deployment before slice 3. If it's too tight, bundle analysis runs in a Container.
-  - **Still to do for the slice:** move the pure code into `@wulf/analyze`. Have supply-chain rules take file text instead of reading disk. Run the account rules in workerd too. Put `analyze-poc`'s equivalence tests in CI. Measure memory on a real deployment.
+  - The WASM module requires **64 MiB minimum** linear memory (1024 declared pages; it refuses less). Measured on a real deployment below.
+- **Result (2026-11-11): done.**
+  - **`@wulf/analyze`** (new, private) holds the AST helpers, wrangler parsing, the rule registry and runner, report shaping, and every rule. It uses no Node APIs. Two pure entry points carry the whole pipeline: `auditProject` (one config, its sources and nearby files → finding groups and notes) and `analyzeAccount` (an `AccountSnapshot` → groups, coverage gaps and rule errors). The CLI is now a Node shell: discovery, disk reads, terminal rendering and `wulf report`. tsup bundles analyze into the CLI the same way as core.
+  - **Supply-chain rules** read through a `ProjectFiles` interface (`read`, `existsUp`, `list`, `display`). The CLI backs it with the disk (`diskFiles`), and the Worker with files sent in the request (`memoryFiles`).
+  - **`AccountSnapshot`** in core gained an Effect Schema, so the Worker decodes posted snapshots. Binding entries keep only `type` and `name`, which drops binding values at the edge.
+  - **No behaviour change in the CLI:** across 21 projects (the CLI fixtures, every workerwulf Worker package, and four voidmoon-io Workers), the JSON output's 10,345 findings and the human-readable output are byte-identical to the previous commit.
+  - **Exit criterion met.** Under `wrangler dev`:
+    - every CLI fixture posted to `/analyze` returns the same report text as `wulf audit --source --json` (66 findings, supply-chain included);
+    - a canned account that fires all seven account rules and has two coverage gaps returns the same report text from `/scan` as `wulf scan --json`.
+    - As a one-off, 16 real projects also matched byte for byte.
+  - The Worker drops `nodejs_compat`. The bundle is 661 KiB gzipped and starts in 29 ms. CI (`.github/workflows/cli.yml`) now typechecks and tests analyze, runs the workerd equivalence suite, and fails if the bundle exceeds 3 MB gzipped.
+  - **Measured on a real deployment** (temporary, bearer-token gated, deleted afterwards):
+    - About **1.5 MB of JavaScript per parse** is safe: a 1.47 MB bundle took 582 ms CPU and left 104 MiB of WASM memory.
+    - A 3.44 MB bundle responded, then the isolate was killed for exceeding memory. A 5.7 MB bundle failed to grow memory, and a 25 MB bundle hit the resource limit.
+    - WASM memory grows to fit the largest file and never shrinks, so one large parse costs the isolate that memory for life.
+    - CPU is 0.15–0.4 ms per KB, so even small bundles exceed the Free plan's 10 ms. The analyzer needs Workers Paid or a Workflow step.
+  - **Carried into slice 3:**
+    - Route bundles above about 1.5 MB to a Container, and record anything not analysed as a coverage entry. Today a file that fails to parse is only a note.
+    - Consider recycling the isolate after a large parse.
+    - `wrangler.json(c)` with trailing commas fails to parse in both the CLI and the Worker, which silently skips that config. voidmoon-io's `site/lab` is one example.
 
 ### Slice 3: ScanHub and ScanWorkflow
 
@@ -287,7 +306,7 @@ P2–P4 collectors, zone baseline, Access and Tunnels, identity (`can_deploy`), 
 
 | Risk | Mitigation |
 |---|---|
-| oxc-parser in workerd: WASM size and loading | Slice 2 is a dedicated proof with a budget and a container fallback |
+| oxc-parser in workerd: WASM size and loading | Measured in slice 2: 661 KiB gzipped, but a single parse is safe only up to about 1.5 MB of JavaScript. Larger bundles go to a Container, and anything skipped is recorded as coverage. |
 | Effect 4 bundle size in Workers | Measure in slice 2. Import from `effect/<Module>` paths and keep collectors tree-shakable |
 | Workflow step limits and payload size | Chunk collectors (4 scripts/step). Batches carry no bundle content, only derived data |
 | Cloudflare API rate limit (1,200 req / 5 min) | `Schedule`-based pacing in `CfApiRest`, retrying 429s with backoff, concurrency 4 |
@@ -297,7 +316,7 @@ P2–P4 collectors, zone baseline, Access and Tunnels, identity (`can_deploy`), 
 
 **Open questions**
 
-1. Should `@wulf/analyze` and `@wulf/core` be one package? Decide after slice 2 measures bundle sizes.
+1. ~~Should `@wulf/analyze` and `@wulf/core` be one package?~~ Kept separate (slice 2). Core is the data contract and collection, and analyze depends on it. Both bundle into the CLI, and the Worker's size is dominated by the oxc WASM, not by either package.
 2. Should history in R2 be JSONL or Parquet? JSONL is the default. Revisit when queries over history become a real need. R2 SQL / Data Catalog is optional and only arrives with Parquet.
 3. When open-sourcing, under what name, and should the platform live in this repo or a new one? The research repo stays academic, so a likely split is `workerwulf` (research) and a separate platform repo, with rules/probe IDs shared.
 4. Should the platform's own token be minted per scan (short-lived, Vault-style) or stay a long-lived read-only token in Secrets Store?
@@ -311,4 +330,6 @@ P2–P4 collectors, zone baseline, Access and Tunnels, identity (`can_deploy`), 
 | 2026-11-10 | Probe Workers are frozen. Effect goes into `core`, `cli`, `hub`, `harness` and `console` only. |
 | 2026-11-10 | Coverage is part of the data model: failures are never turned into empty values. |
 | 2026-11-10 | One deployment per account. No multi-tenant SaaS. |
-| 2026-11-10 | Track current oxc-parser (0.158, ESTree) and use its official workerd build. Rules use `src/ast/nodes.ts` instead of matching node types directly. |
+| 2026-11-10 | Track current oxc-parser (0.158, ESTree) and use its official workerd build. Rules use `packages/analyze/src/ast/nodes.ts` instead of matching node types directly. |
+| 2026-11-11 | One analysis pipeline for every runtime. `@wulf/analyze` takes text in and returns findings, and the CLI only adds disk access and rendering, so CLI and Worker results are equal by construction and checked byte for byte in CI. |
+| 2026-11-11 | In-Worker AST analysis is capped at about 1.5 MB per bundle, as measured on a real deployment. Larger bundles go to a Container, never silently skipped. |

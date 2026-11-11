@@ -1,23 +1,15 @@
-import type { Coverage } from "@wulf/core";
+import type { Severity } from "@wulf/analyze";
+import type { AuditReport } from "@wulf/analyze";
 
-import type { Finding, Severity } from "./rule.js";
-import { countBySeverity, sortFindings, type SeverityCounts } from "./runner.js";
-
-export interface FindingGroup {
-  kind: "config" | "source" | "account";
-  /** What the findings pertain to: "wrangler.toml", "src/index.ts", "script:foo". */
-  source: string;
-  findings: Finding[];
-}
-
-export interface AuditReport {
-  run_id: string;
-  timestamp: string;
-  groups: FindingGroup[];
-  counts: SeverityCounts;
-  /** Live scans only: reads that did not complete. Absent for offline audits. */
-  coverage?: Coverage[];
-}
+export {
+  buildReport,
+  renderJson,
+  toSerializable,
+  totalFindings,
+  type AuditReport,
+  type FindingGroup,
+  type SerializedReport,
+} from "@wulf/analyze";
 
 const SEVERITY_COLORS: Record<Severity, string> = {
   critical: "\x1b[1;35m", // bright magenta
@@ -35,23 +27,6 @@ function useColor(): boolean {
 
 function color(text: string, code: string): string {
   return useColor() ? `${code}${text}${RESET}` : text;
-}
-
-/** Build the aggregate report from grouped findings. */
-export function buildReport(
-  runId: string,
-  timestamp: string,
-  groups: FindingGroup[],
-  coverage?: Coverage[],
-): AuditReport {
-  const all = groups.flatMap((g) => g.findings);
-  return {
-    run_id: runId,
-    timestamp,
-    groups: groups.map((g) => ({ ...g, findings: sortFindings(g.findings) })),
-    counts: countBySeverity(all),
-    ...(coverage && { coverage }),
-  };
 }
 
 function wrap(text: string, width: number, indent: string): string {
@@ -98,34 +73,4 @@ export function renderHuman(report: AuditReport): string {
     `${total} finding(s): ${c.critical} critical, ${c.high} high, ${c.medium} medium, ${c.low} low, ${c.informational} info`,
   );
   return out.join("\n");
-}
-
-/** Serializable run-result object (PRD §13.2 shape). Shared by JSON output and
- * persisted run files so `wulf report` can read back what `audit`/`scan` emit. */
-export interface SerializedReport {
-  run_id: string;
-  timestamp: string;
-  sources: { source: string; findings: Finding[] }[];
-  counts: SeverityCounts;
-  /** Reads that did not complete during a live scan. */
-  coverage?: Coverage[];
-}
-
-export function toSerializable(report: AuditReport): SerializedReport {
-  return {
-    run_id: report.run_id,
-    timestamp: report.timestamp,
-    sources: report.groups.map((g) => ({ source: g.source, findings: g.findings })),
-    counts: report.counts,
-    ...(report.coverage && { coverage: report.coverage }),
-  };
-}
-
-/** Machine-readable JSON (PRD §13.2). */
-export function renderJson(report: AuditReport): string {
-  return JSON.stringify(toSerializable(report), null, 2);
-}
-
-export function totalFindings(report: AuditReport): Finding[] {
-  return report.groups.flatMap((g) => g.findings);
 }

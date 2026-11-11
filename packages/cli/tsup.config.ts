@@ -8,9 +8,10 @@ export default defineConfig({
   // Bundle our own source; keep runtime deps (oxc-parser has native/WASM
   // binaries) external so npm installs them rather than inlining.
   bundle: true,
-  // @wulf/core is a private workspace package: inline it. Its own dependency
-  // (effect) stays external and is declared in this package's dependencies.
-  noExternal: ["@wulf/core"],
+  // @wulf/core and @wulf/analyze are private workspace packages: inline them.
+  // Their own dependencies (effect, oxc-parser, smol-toml) stay external and
+  // are declared in this package's dependencies.
+  noExternal: ["@wulf/core", "@wulf/analyze"],
   clean: true,
   sourcemap: false,
   dts: false,

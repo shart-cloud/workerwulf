@@ -1,6 +1,5 @@
 import type { SerializedReport } from "../engine/output.js";
-import type { Finding } from "../engine/rule.js";
-import { countBySeverity, sortFindings, type SeverityCounts } from "../engine/runner.js";
+import { countBySeverity, sortFindings, type Finding, type SeverityCounts } from "@wulf/analyze";
 
 export interface AggregatedFinding extends Finding {
   /** How many times this (rule, resource) appeared across the loaded runs. */

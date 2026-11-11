@@ -1,8 +1,9 @@
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { CfApi, type RawBinding, type RawNamespace } from "../cf/api.js";
 import type { CfError } from "../cf/errors.js";
-import { coverageFromError, type Coverage } from "./coverage.js";
+import { Coverage, coverageFromError } from "./coverage.js";
 
 /**
  * One deployed script as collected. A field is `undefined` when its read did
@@ -22,6 +23,35 @@ export interface AccountSnapshot {
   readonly namespaces: ReadonlyArray<RawNamespace>;
   readonly coverage: ReadonlyArray<Coverage>;
 }
+
+/**
+ * Decodes a snapshot that crossed a process boundary (e.g. posted to a Worker).
+ * Binding entries keep only `type` and `name`, which is all the rules read, so
+ * binding values are dropped at the edge.
+ */
+export const AccountSnapshot = Schema.Struct({
+  accountId: Schema.String,
+  scripts: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      bindings: Schema.optionalKey(Schema.Array(Schema.Struct({ type: Schema.String, name: Schema.String }))),
+      routes: Schema.optionalKey(Schema.Array(Schema.String)),
+      content: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  namespaces: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      trusted: Schema.optionalKey(Schema.Boolean),
+      outbound: Schema.optionalKey(Schema.Unknown),
+      limits: Schema.optionalKey(Schema.Unknown),
+      scripts: Schema.optionalKey(
+        Schema.Array(Schema.Struct({ name: Schema.String, untrusted: Schema.optionalKey(Schema.Boolean) })),
+      ),
+    }),
+  ),
+  coverage: Schema.Array(Coverage),
+});
 
 export interface CollectAccountOptions {
   /** Inspect only this dispatch namespace instead of listing them all. */

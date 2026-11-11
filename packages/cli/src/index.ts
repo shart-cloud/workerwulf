@@ -7,7 +7,7 @@ import { Command } from "commander";
 import { runAudit, type AuditOptions } from "./commands/audit.js";
 import { runReport, type ReportOptions } from "./commands/report.js";
 import { runScan, type ScanOptions } from "./commands/scan.js";
-import type { Severity } from "./engine/rule.js";
+import type { Severity } from "@wulf/analyze";
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low", "informational"];
 

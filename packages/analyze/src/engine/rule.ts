@@ -1,6 +1,7 @@
 import type { Finding, Severity } from "@wulf/core";
 
 import type { BindingMap } from "../ast/binding-map.js";
+import type { ProjectFiles } from "./files.js";
 import type { SourceFile } from "../ast/parse.js";
 import type { DeclaredBinding } from "../parsers/bindings.js";
 import type { WranglerConfig } from "../parsers/wrangler.js";
@@ -25,6 +26,8 @@ export interface ConfigContext {
   configPath: string;
   /** Environment name this config resolves to ("default" or [env.NAME]). */
   envName: string;
+  /** Files next to the config, for supply-chain rules. Those rules skip when absent. */
+  files?: ProjectFiles;
 }
 
 /** Source analysis context — AST + binding map from a single parse pass. */

@@ -3,7 +3,7 @@ import { describe, expect, expectTypeOf, it } from "vitest";
 
 import type { ProbeResult as SharedProbeResult } from "@wulf/shared";
 
-import { Finding, findingKey, ProbeResult } from "../src/index.js";
+import { AccountSnapshot, Finding, findingKey, ProbeResult } from "../src/index.js";
 
 describe("schemas", () => {
   it("decodes a finding and keys it by rule and resource", () => {
@@ -47,5 +47,17 @@ describe("schemas", () => {
   it("stays compatible with @wulf/shared's ProbeResult", () => {
     // Every result the probe Workers emit must decode into the core schema.
     expectTypeOf<SharedProbeResult>().toExtend<ProbeResult>();
+  });
+
+  it("decodes a posted account snapshot and drops binding values", () => {
+    const decoded = Schema.decodeUnknownSync(AccountSnapshot)({
+      accountId: "acct",
+      scripts: [{ name: "prey", bindings: [{ type: "secret_text", name: "TOKEN", text: "s3cret" }] }],
+      namespaces: [{ name: "tenants", trusted: true, outbound: { worker: {} } }],
+      coverage: [{ target: "script:prey", op: "routes", status: "unavailable" }],
+    });
+    expect(decoded.scripts[0]!.bindings).toEqual([{ type: "secret_text", name: "TOKEN" }]);
+    expectTypeOf(decoded).toExtend<AccountSnapshot>();
+    expect(() => Schema.decodeUnknownSync(AccountSnapshot)({ accountId: "acct", scripts: [{}] })).toThrow();
   });
 });

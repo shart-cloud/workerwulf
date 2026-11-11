@@ -1,11 +1,18 @@
 import { describe, expect, it } from "vitest";
 
-import { buildBindingMap } from "../src/ast/binding-map.js";
-import { functionParamNames } from "../src/ast/handlers.js";
-import { isMemberAccess, isObjectLiteralProperty, isStaticMember, PROPERTY } from "../src/ast/nodes.js";
-import { locAt, parse } from "../src/ast/parse.js";
-import { exprName, nodeText } from "../src/ast/patterns.js";
-import { findNodes } from "../src/ast/walk.js";
+import {
+  buildBindingMap,
+  functionParamNames,
+  isMemberAccess,
+  isObjectLiteralProperty,
+  isStaticMember,
+  PROPERTY,
+  locAt,
+  parse,
+  exprName,
+  nodeText,
+  findNodes,
+} from "../src/index.js";
 
 describe("AST offsets", () => {
   it("are UTF-16 indices, so locations after non-ASCII text are exact", () => {

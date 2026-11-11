@@ -3,11 +3,9 @@
   "name": "wulf-analyze-poc",
   "main": "src/worker.ts",
   "compatibility_date": "2026-06-01",
-  // node:fs/node:path are imported by the CLI's config parser and supply-chain rule.
-  "compatibility_flags": ["nodejs_compat"],
   "workers_dev": false,
   "preview_urls": false,
-  // The CLI's ast/parse.ts imports the native "oxc-parser"; in workerd it gets the WASM build.
+  // @wulf/analyze imports the native "oxc-parser"; in workerd it gets the WASM build.
   "alias": {
     "oxc-parser": "./src/oxc-shim.worker.ts"
   }

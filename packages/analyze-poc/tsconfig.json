@@ -1,11 +1,9 @@
 {
-  // The Worker: Workers types plus Node types, matching the `nodejs_compat` flag.
-  // The CLI code it imports still uses node:fs and process. Removing that is
-  // slice 2's "split Node-only code" step, after which "node" can go.
+  // The Worker: Workers types only. @wulf/analyze uses no Node APIs.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2022"],
-    "types": ["@cloudflare/workers-types", "node"],
+    "types": ["@cloudflare/workers-types"],
     "noEmit": true
   },
   "include": ["src/**/*"],
