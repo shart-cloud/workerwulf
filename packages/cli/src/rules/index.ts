@@ -27,3 +27,6 @@ import "./source/service-bindings.js"; // Service binding auth context
 import "./account/least-priv.js";
 import "./account/drift.js";
 import "./account/namespace.js";
+
+// DAST probe rules — black-box, over the network (`wulf probe <url>`)
+import "./probe/index.js";
