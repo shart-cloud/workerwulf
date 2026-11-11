@@ -51,8 +51,11 @@ export interface ParsedWrangler {
   path: string;
 }
 
-/** Strip // line and /* block *\/ comments from JSONC, preserving strings. */
-function stripJsonComments(text: string): string {
+/**
+ * JSONC to JSON: strip // line and /* block *\/ comments and drop trailing
+ * commas before `}` or `]` (wrangler accepts both), leaving strings untouched.
+ */
+function jsoncToJson(text: string): string {
   let out = "";
   let inString = false;
   let stringQuote = "";
@@ -86,6 +89,7 @@ function stripJsonComments(text: string): string {
       i++; // land on the closing '/'
       continue;
     }
+    if (ch === "}" || ch === "]") out = out.replace(/,(\s*)$/, "$1");
     out += ch;
   }
   return out;
@@ -100,7 +104,7 @@ export function parseWranglerText(path: string, text: string): ParsedWrangler {
     return { config: parseToml(text) as WranglerConfig, format: "toml", path };
   }
   // .json / .jsonc
-  const config = JSON.parse(stripJsonComments(text)) as WranglerConfig;
+  const config = JSON.parse(jsoncToJson(text)) as WranglerConfig;
   return { config, format: "json", path };
 }
 
