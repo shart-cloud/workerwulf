@@ -66,10 +66,8 @@ describe("wulf rules inside workerd", () => {
     const mismatches: string[] = [];
     for (const dir of fixtures) {
       for (const file of inputFor(dir, referenceAudit(dir)).files) {
-        const native = normalize(nativeParse(file.path, file.text).program) as { sourceType?: { variant?: string } };
-        const remote = (await post("/parse", file)) as { program: { sourceType?: { variant?: string } } };
-        delete native.sourceType?.variant;
-        delete remote.program.sourceType?.variant;
+        const native = normalize(nativeParse(file.path, file.text).program) as unknown;
+        const remote = (await post("/parse", file)) as { program: unknown };
         const d = firstDiff(native, remote.program);
         if (d) mismatches.push(`${rel(dir)}/${file.path} ${d}`);
       }

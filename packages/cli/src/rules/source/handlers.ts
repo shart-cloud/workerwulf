@@ -1,3 +1,4 @@
+import { isMemberAccess, MEMBER_EXPRESSION } from "../../ast/nodes.js";
 import type { AstNode } from "../../ast/parse.js";
 import { enclosingWorkerHandler } from "../../ast/handlers.js";
 import { calleeMemberPath, exprName, nameLooksSecret } from "../../ast/patterns.js";
@@ -19,7 +20,8 @@ registerSource({
     const findings: Finding[] = [];
     const seen = new Set<string>();
 
-    for (const { node, ancestors } of findNodes(ctx.source.ast, ["StaticMemberExpression", "ComputedMemberExpression"])) {
+    for (const { node, ancestors } of findNodes(ctx.source.ast, MEMBER_EXPRESSION)) {
+      if (!isMemberAccess(node)) continue;
       const object = node["object"] as AstNode | undefined;
       if (object?.type !== "Identifier" || !ctx.bindingMap.envNames.has(object["name"] as string)) continue;
       const binding = exprName(node);

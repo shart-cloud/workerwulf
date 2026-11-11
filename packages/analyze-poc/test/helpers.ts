@@ -11,7 +11,7 @@ export const pocDir = resolve(here, "..");
 export const cliDir = resolve(pocDir, "../cli");
 export const packagesDir = resolve(pocDir, "..");
 
-/** The CLI's own native binding, exactly as `wulf` loads it. */
+/** The CLI's own native binding (oxc-parser 0.158.0), exactly as `wulf` loads it. */
 const cliRequire = createRequire(join(cliDir, "package.json"));
 const native = cliRequire("oxc-parser") as {
   parseSync(f: string, s: string, o: object): { program: unknown; errors: unknown[] };

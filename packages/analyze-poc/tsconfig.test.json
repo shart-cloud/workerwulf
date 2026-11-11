@@ -1,0 +1,10 @@
+{
+  // Tests and the Node shim: Node types only.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    "noEmit": true
+  },
+  "include": ["test/**/*", "src/oxc-shim.node.ts", "src/oxc-loader.ts", "src/analyze.ts", "src/oxc.d.ts"]
+}

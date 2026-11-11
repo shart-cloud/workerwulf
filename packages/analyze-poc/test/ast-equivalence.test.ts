@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { describe, expect, it } from "vitest";
 
+// oxc-parser's workerd WASM build (the one the Worker runs) vs its native Node binding.
 import { parseSync as wasmParse } from "../src/oxc-shim.node.js";
 import { firstDiff, langOf, nativeParse, normalize, packagesDir, rel, sourceFiles } from "./helpers.js";
 
@@ -15,17 +16,6 @@ const corpus = [
   require.resolve("effect/Effect", { paths: [`${packagesDir}/core`] }),
 ];
 
-/**
- * The one known difference (see src/oxc-api.ts): JS files get the "jsx" variant
- * label from the WASM build. Drop just that label before comparing; any other
- * difference fails the test.
- */
-const withoutVariant = (program: unknown) => {
-  const p = normalize(program) as { sourceType?: { variant?: string } };
-  if (p.sourceType) delete p.sourceType.variant;
-  return p;
-};
-
 describe("oxc WASM vs native AST", () => {
   it(`produces identical ASTs across ${corpus.length} files`, () => {
     const mismatches: string[] = [];
@@ -35,8 +25,12 @@ describe("oxc WASM vs native AST", () => {
       bytes += text.length;
       const a = nativeParse(file, text);
       const b = wasmParse(file, text, { sourceType: "module", lang: langOf(file) });
+      if (JSON.stringify(a.errors) !== JSON.stringify(b.errors)) {
+        mismatches.push(`${rel(file)} errors differ`);
+        continue;
+      }
       const diff =
-        firstDiff(withoutVariant(a.program), withoutVariant(b.program)) ??
+        firstDiff(normalize(a.program), normalize(b.program)) ??
         (a.errors.length !== b.errors.length ? `errors: ${a.errors.length} vs ${b.errors.length}` : undefined);
       if (diff) mismatches.push(`${rel(file)} ${diff}`);
     }

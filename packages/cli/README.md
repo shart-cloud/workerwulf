@@ -18,7 +18,7 @@ npm i -g @wulf/cli
 wulf audit . --source --strict
 ```
 
-Requires Node.js ≥ 18. No external tools — `oxc-parser` (Rust/WASM) ships as an
+Requires Node.js 20.19+ or 22.12+. No external tools — `oxc-parser` (Rust/WASM) ships as an
 npm dependency, so there is no Semgrep/Python/Docker requirement.
 
 ## Status — Phases 1–4 complete (PRD fully implemented)

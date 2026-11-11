@@ -1,9 +1,13 @@
 {
+  // The Worker: Workers types plus Node types, matching the `nodejs_compat` flag.
+  // The CLI code it imports still uses node:fs and process. Removing that is
+  // slice 2's "split Node-only code" step, after which "node" can go.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "lib": ["ES2022"],
-    "types": ["node", "@cloudflare/workers-types"],
+    "types": ["@cloudflare/workers-types", "node"],
     "noEmit": true
   },
-  "include": ["src/**/*", "test/**/*", "scripts/**/*"]
+  "include": ["src/**/*"],
+  "exclude": ["src/oxc-shim.node.ts"]
 }

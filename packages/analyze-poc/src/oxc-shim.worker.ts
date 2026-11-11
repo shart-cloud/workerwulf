@@ -1,11 +1,11 @@
 // Stands in for "oxc-parser" inside workerd (see wrangler.jsonc `alias`).
-// Wrangler compiles the .wasm import to a WebAssembly.Module at build time, so
-// instantiation is synchronous and there is no fetch at runtime.
-import wasmModule from "@oxc-parser/wasm/web/oxc_parser_wasm_bg.wasm";
-import { initSync, parseSync as wasmParseSync } from "@oxc-parser/wasm/web/oxc_parser_wasm.js";
+// Wrangler compiles the .wasm import to a WebAssembly.Module at build time; the
+// instance is created once per isolate, at module evaluation.
+import wasmModule from "@oxc-parser/binding-wasm32-wasip1/wasm.wasm";
 
-import { adaptWasmParser } from "./oxc-api.js";
+import { loadParser } from "./oxc-loader.js";
 
-initSync({ module: wasmModule });
+const parser = await loadParser(wasmModule);
 
-export const parseSync = adaptWasmParser(wasmParseSync);
+export const parseSync = parser.parseSync;
+export const wasmMemoryBytes = parser.memoryBytes;

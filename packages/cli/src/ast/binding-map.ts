@@ -1,3 +1,4 @@
+import { functionParams, isMemberAccess, isObjectLiteralProperty, isStaticMember, MEMBER_EXPRESSION } from "./nodes.js";
 import type { AstNode, SourceFile, SourceLocation } from "./parse.js";
 import { locAt } from "./parse.js";
 import { walk } from "./walk.js";
@@ -42,10 +43,7 @@ const FUNCTION_TYPES = new Set([
 
 /** Return the pattern node of the `index`-th formal parameter, if present. */
 function paramPattern(fn: AstNode, index: number): AstNode | undefined {
-  const params = fn["params"] as AstNode | undefined;
-  const items = (params?.["items"] as AstNode[] | undefined) ?? [];
-  const item = items[index];
-  return item?.["pattern"] as AstNode | undefined;
+  return functionParams(fn)[index];
 }
 
 /** Collect binding names declared in an ObjectPattern (destructuring). */
@@ -53,7 +51,7 @@ function objectPatternNames(pattern: AstNode): string[] {
   const names: string[] = [];
   const properties = (pattern["properties"] as AstNode[] | undefined) ?? [];
   for (const prop of properties) {
-    // oxc: BindingProperty { key, value, shorthand }
+    // ESTree: Property { key, value, shorthand }; a RestElement has no key and is skipped.
     const key = prop["key"] as AstNode | undefined;
     if (key?.type === "Identifier") names.push(key["name"] as string);
     else if (key?.type === "Literal") names.push(String(key["value"]));
@@ -86,9 +84,9 @@ export function buildBindingMap(source: SourceFile): BindingMap {
         const grandparent = ancestors[ancestors.length - 2];
         const isHandler =
           // { fetch(req, env, ctx) {} } or fetch: (req, env) => {}
-          (parent?.type === "ObjectProperty" &&
-            keyName(parent) !== undefined &&
-            HANDLER_KEYS.has(keyName(parent)!)) ||
+          (isObjectLiteralProperty(parent, grandparent) &&
+            keyName(parent!) !== undefined &&
+            HANDLER_KEYS.has(keyName(parent!)!)) ||
           // export default async (req, env, ctx) => {}
           parent?.type === "ExportDefaultDeclaration" ||
           grandparent?.type === "ExportDefaultDeclaration";
@@ -128,21 +126,22 @@ export function buildBindingMap(source: SourceFile): BindingMap {
   // Pass 2 — collect env.X / env["X"] / const { X } = env references.
   walk(source.ast, [
     {
-      nodeType: ["StaticMemberExpression", "ComputedMemberExpression"],
+      nodeType: MEMBER_EXPRESSION,
       enter(node, ancestors) {
+        if (!isMemberAccess(node)) return;
         const object = node["object"] as AstNode | undefined;
         if (object?.type !== "Identifier") return;
         if (!envNames.has(object["name"] as string)) return;
 
         let name: string | undefined;
         let accessType: BindingRef["accessType"];
-        if (node.type === "StaticMemberExpression") {
+        if (isStaticMember(node)) {
           const property = node["property"] as AstNode | undefined;
           if (property?.type !== "Identifier") return;
           name = property["name"] as string;
           accessType = "dot";
         } else {
-          const expr = node["expression"] as AstNode | undefined;
+          const expr = node["property"] as AstNode | undefined;
           if (expr?.type !== "Literal" || typeof expr["value"] !== "string") return;
           name = expr["value"] as string;
           accessType = "bracket";
@@ -195,14 +194,14 @@ function keyName(prop: AstNode): string | undefined {
 /**
  * If `member` (e.g. env.KV) is the receiver of a method call (env.KV.get(...)),
  * return the method name ("get"). The parent in the AST is the outer
- * `StaticMemberExpression` whose property is the method, and its parent is the
+ * non-computed `MemberExpression` whose property is the method, and its parent is the
  * CallExpression.
  */
 function detectMethodCall(member: AstNode, ancestors: AstNode[]): string | undefined {
   const parent = ancestors[ancestors.length - 1];
   const grandparent = ancestors[ancestors.length - 2];
   if (
-    parent?.type === "StaticMemberExpression" &&
+    isStaticMember(parent) &&
     parent["object"] === member &&
     grandparent?.type === "CallExpression" &&
     grandparent["callee"] === parent

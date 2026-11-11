@@ -8,10 +8,11 @@
     "dev": "wrangler dev",
     "bundle": "wrangler deploy --dry-run --outdir dist",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
   },
   "dependencies": {
-    "@oxc-parser/wasm": "0.40.1"
+    "@oxc-parser/binding-wasm32-wasip1": "0.158.0",
+    "oxc-parser": "0.158.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250101.0",

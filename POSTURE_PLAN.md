@@ -239,13 +239,20 @@ Each slice ends with the repo green (`pnpm -r typecheck`, all tests) and the CLI
 - Prove that oxc-parser runs in a Worker (`oxc-parser` WASM build, or `@oxc-parser/wasm`), with a bundle-size budget of 3 MB gzipped for the analyzer Worker. If that fails, fall back to the codeshield container for AST analysis.
 - **Exit:** a `wrangler dev` test Worker runs every account and source rule against a fixture snapshot, and its output matches the CLI byte for byte.
 - **Parser proof of concept (2026-11-10): passed.** See `packages/analyze-poc/README.md`.
-  - **How it works:** a wrangler `alias` swaps `oxc-parser` for a shim over `@oxc-parser/wasm@0.40.1`, the WASM build at the same version as the CLI's native parser. The CLI's parser, rules and report code run in workerd **unchanged**. The only CLI change is `parseWranglerText` split out of `parseWrangler`.
-  - **Findings:** for all 7 CLI fixtures, the Worker's output under `wrangler dev` deep-equals `wulf audit --source --json`. That's 66 reference findings. The 5 supply-chain (`WF-SC-*`) findings are excluded because they read Dockerfile and package.json from disk; a Worker needs those passed in as files.
-  - **AST:** identical between WASM and native across 272 files (1.5 MB: every package's source plus Effect's bundles), and over HTTP from workerd for every fixture source. The one exception is a label: the WASM build marks JavaScript `sourceType.variant` as `"jsx"`. Parse errors and every node are otherwise identical, and no rule reads that field.
-  - **Size:** 347 KiB gzipped in total (WASM 275 KiB, JS 77 KiB), against the 3 MB budget.
-  - **CPU:** WASM is 2.5–3× slower than native, about 55–62 ms for a 150–350 KB bundle in Node, with source files near 0 ms. A 356 KB bundle takes about 200 ms round trip in `wrangler dev`. That's fine on Workers Paid and in Workflow steps, but **large bundles exceed the Free plan's 10 ms CPU limit**.
-  - **Dependency risk:** npm marks `@oxc-parser/wasm` as no longer supported. Current `oxc-parser` (0.158) has an official `oxc-parser/workerd` entry, but its AST appears to be ESTree-shaped, unlike 0.40's native shape (e.g. `StaticMemberExpression`) that the rules match on. Moving to it means adapting the AST helpers in `src/ast`, and the equivalence tests here are the safety net for that.
-  - **Still to do for the slice:** move the pure code into `@wulf/analyze`. Have supply-chain rules take file text instead of reading disk. Run the account rules in workerd as well (the POC covers config and source rules). Put `analyze-poc`'s equivalence tests in CI.
+  - **First pass:** used the deprecated `@oxc-parser/wasm@0.40.1`. It matched the CLI on every fixture but tied us to an unmaintained package, so it was replaced the same day.
+  - **oxc-parser upgraded from 0.40.1 to 0.158.0** (`@wulf/cli`):
+    - 0.158 emits ESTree. The AST helpers and rules now go through `src/ast/nodes.ts` (`isStaticMember`, `isMemberAccess`, `isObjectLiteralProperty`, `functionParams`). Those keep 0.40's semantics exactly: private fields aren't member access, destructuring properties aren't object-literal properties, and the TS `this` and rest parameters are skipped.
+    - **Fixes a location bug.** 0.40 reported UTF-8 *byte* offsets that the CLI used as string indices, so every finding after a non-ASCII character had the wrong line and evidence text. Across the test corpus that was 6,585 findings, including 5 in the `families` fixture.
+    - **Regression check:** `wulf audit --source --json` over 18 projects (the CLI fixtures, every workerwulf Worker package, and four voidmoon-io Workers). On 0.158 the 10,345 findings are **byte-identical** to a 0.40 baseline whose offsets were mechanically converted to UTF-16. No rule's behaviour changed.
+    - New `test/ast.test.ts` pins the offset fix and the ESTree edge cases. CLI tests: 46.
+    - oxc-parser 0.158 needs Node `^20.19.0 || >=22.12.0`, so the CLI's `engines`, its tsup target and the CI matrix (now 20 and 24) moved off Node 18, which reached end of life in April 2025.
+  - **Worker:** a wrangler `alias` points `oxc-parser` at oxc's official workerd build (`@oxc-parser/binding-wasm32-wasip1/workerd`, same version), wrapped with oxc's own `wrap`. The CLI's parser, rules and report code run in workerd unchanged. The only other CLI change is `parseWranglerText` split out of `parseWrangler`.
+  - **AST:** the workerd WASM build and the native binding are **identical across 274 files** (1.5 MB), with no exceptions, both in Node and over HTTP from workerd.
+  - **Findings:** for all 7 CLI fixtures, the Worker under `wrangler dev` deep-equals `wulf audit --source --json`. That's 66 findings, with the 5 supply-chain `WF-SC-*` findings excluded because they read files from disk.
+  - **Size:** 658 KiB gzipped (WASM 501 KiB, JS 165 KiB), against the 3 MB budget.
+  - **CPU:** a 356 KB bundle takes about 119 ms round trip in `wrangler dev`. That's fine on Workers Paid and in Workflow steps, but large bundles exceed the Free plan's 10 ms CPU limit.
+  - **Open risk, memory:** the WASM module requires **64 MiB minimum** linear memory (1024 declared pages; it refuses less). It grew to 84 MiB after 20 large parses and never shrinks, all inside a 128 MB isolate. `wrangler dev` doesn't enforce the limit, so headroom must be measured on a real deployment before slice 3. If it's too tight, bundle analysis runs in a Container.
+  - **Still to do for the slice:** move the pure code into `@wulf/analyze`. Have supply-chain rules take file text instead of reading disk. Run the account rules in workerd too. Put `analyze-poc`'s equivalence tests in CI. Measure memory on a real deployment.
 
 ### Slice 3: ScanHub and ScanWorkflow
 
@@ -304,3 +311,4 @@ P2–P4 collectors, zone baseline, Access and Tunnels, identity (`can_deploy`), 
 | 2026-11-10 | Probe Workers are frozen. Effect goes into `core`, `cli`, `hub`, `harness` and `console` only. |
 | 2026-11-10 | Coverage is part of the data model: failures are never turned into empty values. |
 | 2026-11-10 | One deployment per account. No multi-tenant SaaS. |
+| 2026-11-10 | Track current oxc-parser (0.158, ESTree) and use its official workerd build. Rules use `src/ast/nodes.ts` instead of matching node types directly. |

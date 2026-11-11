@@ -28,7 +28,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node: [18, 20] # 18 = the engines floor declared in package.json
+        node: [20, 24] # 20 = the engines floor declared in package.json (oxc-parser needs ^20.19 || >=22.12)
     steps:
       - uses: actions/checkout@v4
 

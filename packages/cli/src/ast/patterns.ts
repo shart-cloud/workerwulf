@@ -1,3 +1,4 @@
+import { isComputedMember, isMemberAccess, isStaticMember } from "./nodes.js";
 import type { AstNode, SourceFile } from "./parse.js";
 
 const FUNCTION_TYPES = new Set([
@@ -43,7 +44,7 @@ function calleeName(node: AstNode): string | undefined {
 /** For a member-expression callee, return "object.property" (e.g. "console.log"). */
 function memberCalleeName(node: AstNode): string | undefined {
   const callee = node["callee"] as AstNode | undefined;
-  if (!callee || callee.type !== "StaticMemberExpression") return undefined;
+  if (!isStaticMember(callee)) return undefined;
   const object = callee["object"] as AstNode | undefined;
   const property = callee["property"] as AstNode | undefined;
   if (object?.type !== "Identifier" || property?.type !== "Identifier") {
@@ -131,7 +132,7 @@ export function isSuccessValue(node: AstNode | undefined): boolean {
   if (node.type === "ObjectExpression") {
     const props = (node["properties"] as AstNode[] | undefined) ?? [];
     for (const prop of props) {
-      if (prop.type !== "ObjectProperty") continue;
+      if (prop.type !== "Property") continue;
       const key = prop["key"] as AstNode | undefined;
       const keyName =
         key?.type === "Identifier"
@@ -161,12 +162,12 @@ export function nodeText(source: SourceFile, node: AstNode): string {
 export function exprName(node: AstNode | undefined): string | undefined {
   if (!node) return undefined;
   if (node.type === "Identifier") return node["name"] as string;
-  if (node.type === "StaticMemberExpression") {
+  if (isStaticMember(node)) {
     const property = node["property"] as AstNode | undefined;
     if (property?.type === "Identifier") return property["name"] as string;
   }
-  if (node.type === "ComputedMemberExpression") {
-    const expr = node["expression"] as AstNode | undefined;
+  if (isComputedMember(node)) {
+    const expr = node["property"] as AstNode | undefined;
     if (expr?.type === "Literal" && typeof expr["value"] === "string") {
       return expr["value"] as string;
     }
@@ -241,7 +242,7 @@ export function referencesRequestInput(node: AstNode): boolean {
         found = true;
         return;
       }
-      if (n.type === "StaticMemberExpression") {
+      if (isStaticMember(n)) {
         const property = n["property"] as AstNode | undefined;
         if (property?.type === "Identifier" && REQUEST_MEMBERS.has((property["name"] as string).toLowerCase())) {
           found = true;
@@ -272,7 +273,7 @@ export function calleeMemberPath(call: AstNode): string[] | undefined {
       path.unshift(cur["name"] as string);
       break;
     }
-    if (cur.type === "StaticMemberExpression") {
+    if (isStaticMember(cur)) {
       const property = cur["property"] as AstNode | undefined;
       if (property?.type === "Identifier") path.unshift(property["name"] as string);
       cur = cur["object"] as AstNode | undefined;
@@ -320,7 +321,7 @@ export function findEnvAccess(
       return;
     }
     const n = value as AstNode;
-    if (n.type === "StaticMemberExpression" || n.type === "ComputedMemberExpression") {
+    if (isMemberAccess(n)) {
       const object = n["object"] as AstNode | undefined;
       if (object?.type === "Identifier" && envNames.has(object["name"] as string)) {
         const binding = exprName(n);

@@ -1,12 +1,11 @@
-// The same WASM parser, loaded in Node, for equivalence tests against the native binding.
+// The same WASM build the Worker uses, loaded in Node for equivalence tests.
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 
-import { initSync, parseSync as wasmParseSync } from "@oxc-parser/wasm/web/oxc_parser_wasm.js";
-
-import { adaptWasmParser } from "./oxc-api.js";
+import { loadParser } from "./oxc-loader.js";
 
 const require = createRequire(import.meta.url);
-initSync({ module: readFileSync(require.resolve("@oxc-parser/wasm/web/oxc_parser_wasm_bg.wasm")) });
+const wasmPath = require.resolve("@oxc-parser/binding-wasm32-wasip1/wasm.wasm");
 
-export const parseSync = adaptWasmParser(wasmParseSync);
+export const parser = await loadParser(new WebAssembly.Module(readFileSync(wasmPath)));
+export const parseSync = parser.parseSync;

@@ -1,3 +1,4 @@
+import { functionParams, isObjectLiteralProperty, PROPERTY } from "./nodes.js";
 import type { AstNode } from "./parse.js";
 import { findNodes } from "./walk.js";
 
@@ -33,7 +34,7 @@ export function enclosingWorkerHandlerInfo(
     const parent = ancestors[i - 1];
     const grandparent = ancestors[i - 2];
 
-    const parentKey = parent?.type === "ObjectProperty" ? propertyKeyName(parent) : undefined;
+    const parentKey = isObjectLiteralProperty(parent, grandparent) ? propertyKeyName(parent!) : undefined;
     if (parentKey && HANDLER_KEYS.has(parentKey as WorkerHandlerKind)) {
       return { kind: parentKey as WorkerHandlerKind, fn };
     }
@@ -49,20 +50,16 @@ export function enclosingWorkerHandlerInfo(
 
 /** Formal parameter names for a function-like node. */
 export function functionParamNames(fn: AstNode): string[] {
-  const params = fn["params"] as AstNode | undefined;
-  const items = (params?.["items"] as AstNode[] | undefined) ?? [];
-  const names: string[] = [];
-  for (const item of items) {
-    const pattern = item?.["pattern"] as AstNode | undefined;
-    if (pattern?.type === "Identifier") names.push(pattern["name"] as string);
-  }
-  return names;
+  return functionParams(fn)
+    .filter((p) => p.type === "Identifier")
+    .map((p) => p["name"] as string);
 }
 
 /** All structurally-declared Worker handlers in a source tree. */
 export function findWorkerHandlers(root: AstNode): { kind: WorkerHandlerKind; fn: AstNode }[] {
   const handlers: { kind: WorkerHandlerKind; fn: AstNode }[] = [];
-  for (const { node } of findNodes(root, "ObjectProperty")) {
+  for (const { node, ancestors } of findNodes(root, PROPERTY)) {
+    if (!isObjectLiteralProperty(node, ancestors[ancestors.length - 1])) continue;
     const key = propertyKeyName(node);
     if (!key || !HANDLER_KEYS.has(key as WorkerHandlerKind)) continue;
     const value = node["value"] as AstNode | undefined;
