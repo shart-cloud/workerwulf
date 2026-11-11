@@ -1,0 +1,10 @@
+{
+  // Tests run inside workerd through @cloudflare/vitest-plugin.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "ESNext.Disposable"],
+    "types": ["@cloudflare/workers-types", "@cloudflare/vitest-plugin/types"],
+    "noEmit": true
+  },
+  "include": ["src/**/*", "test/**/*"]
+}

@@ -78,21 +78,33 @@ const attempt = <A>(
     }),
   );
 
+/** Scripts and namespaces collected so far, with the coverage of every read. */
+export interface CollectedPart {
+  readonly scripts: ReadonlyArray<ScriptSnapshot>;
+  readonly namespaces: ReadonlyArray<RawNamespace>;
+  readonly coverage: ReadonlyArray<Coverage>;
+}
+
+/** List the account's scripts. Fatal on failure: without the list there is nothing to scan. */
+export const collectScriptNames: Effect.Effect<ReadonlyArray<string>, CfError, CfApi> = Effect.gen(
+  function* () {
+    const api = yield* CfApi;
+    return yield* api.listScripts;
+  },
+);
+
+export const LIST_SCRIPTS_COVERAGE: Coverage = { target: "account", op: "listScripts", status: "complete" };
+
 /**
- * Collect the Workers surface of an account. Only listing the scripts is fatal:
- * without it there is nothing to scan. Every other read degrades to a coverage
- * entry so the rules still run on what could be seen.
+ * Read bindings, routes and content for some scripts. Never fails: each read
+ * that doesn't complete becomes a coverage entry. Output keeps input order.
  */
-export const collectAccount = (
-  options: CollectAccountOptions = {},
-): Effect.Effect<AccountSnapshot, CfError, CfApi> =>
+export const collectScripts = (
+  names: ReadonlyArray<string>,
+  options: Pick<CollectAccountOptions, "concurrency"> = {},
+): Effect.Effect<CollectedPart, never, CfApi> =>
   Effect.gen(function* () {
     const api = yield* CfApi;
-    const coverage: Coverage[] = [];
-
-    const names = yield* api.listScripts;
-    coverage.push({ target: "account", op: "listScripts", status: "complete" });
-
     const collected = yield* Effect.forEach(
       names,
       (name) =>
@@ -117,9 +129,20 @@ export const collectAccount = (
       { concurrency: options.concurrency ?? 4 },
     );
     // forEach keeps input order, so coverage stays deterministic under concurrency.
-    const scripts = collected.map((c) => c.script);
-    for (const c of collected) coverage.push(...c.coverage);
+    return {
+      scripts: collected.map((c) => c.script),
+      namespaces: [],
+      coverage: collected.flatMap((c) => c.coverage),
+    };
+  });
 
+/** Read dispatch namespaces (one, or all of them). Never fails; gaps become coverage. */
+export const collectNamespaces = (
+  options: Pick<CollectAccountOptions, "namespace"> = {},
+): Effect.Effect<CollectedPart, never, CfApi> =>
+  Effect.gen(function* () {
+    const api = yield* CfApi;
+    const coverage: Coverage[] = [];
     let namespaceNames: ReadonlyArray<string>;
     if (options.namespace !== undefined) {
       namespaceNames = [options.namespace];
@@ -135,6 +158,33 @@ export const collectAccount = (
       coverage.push(read.coverage);
       if (read.value) namespaces.push(read.value);
     }
+    return { scripts: [], namespaces, coverage };
+  });
 
-    return { accountId: api.accountId, scripts, namespaces, coverage };
+/** Join parts in collection order into one snapshot. */
+export const joinParts = (accountId: string, parts: ReadonlyArray<CollectedPart>): AccountSnapshot => ({
+  accountId,
+  scripts: parts.flatMap((p) => p.scripts),
+  namespaces: parts.flatMap((p) => p.namespaces),
+  coverage: parts.flatMap((p) => p.coverage),
+});
+
+/**
+ * Collect the Workers surface of an account. Only listing the scripts is fatal:
+ * without it there is nothing to scan. Every other read degrades to a coverage
+ * entry so the rules still run on what could be seen.
+ *
+ * ScanWorkflow runs the same pieces one step at a time: the list, scripts in
+ * chunks, then namespaces.
+ */
+export const collectAccount = (
+  options: CollectAccountOptions = {},
+): Effect.Effect<AccountSnapshot, CfError, CfApi> =>
+  Effect.gen(function* () {
+    const api = yield* CfApi;
+    const names = yield* collectScriptNames;
+    const scripts = yield* collectScripts(names, options);
+    const namespaces = yield* collectNamespaces(options);
+    const listed: CollectedPart = { scripts: [], namespaces: [], coverage: [LIST_SCRIPTS_COVERAGE] };
+    return joinParts(api.accountId, [listed, scripts, namespaces]);
   });

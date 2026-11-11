@@ -197,3 +197,76 @@ describe("wulf scan — coverage", () => {
     }
   });
 });
+
+describe("wulf scan --push", () => {
+  const HUB_REPLY = { scan_id: "push-1", status: "complete", seen: 5, opened: 5, reopened: 0, resolved: 0 };
+
+  it("sends the account summary to ScanHub, without bundle text or binding values", async () => {
+    const sent: Array<{ url: string; init: RequestInit }> = [];
+    const { output, exitCode } = await runScan(
+      { accountId: "acct", push: "https://hub.example/", pushToken: "hub-token" },
+      new FakeCfClient(),
+      async (url, init) => {
+        sent.push({ url, init });
+        return Response.json(HUB_REPLY);
+      },
+    );
+    expect(exitCode).toBe(0);
+    expect(output).toContain("note: pushed to https://hub.example/ as push-1 (complete): 5 findings, 5 new");
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.url).toBe("https://hub.example/ingest/scan");
+    expect(new Headers(sent[0]!.init.headers).get("authorization")).toBe("Bearer hub-token");
+    const body = sent[0]!.init.body as string;
+    expect(body).not.toContain("connectionString");
+    const parsed = JSON.parse(body);
+    expect(parsed.accountId).toBe("acct");
+    expect(parsed.batches).toHaveLength(1);
+    expect(parsed.batches[0].scripts).toEqual([
+      {
+        name: "prey",
+        bindings: [
+          { type: "hyperdrive", name: "HYPERDRIVE" },
+          { type: "kv_namespace", name: "UNUSED_KV" },
+          { type: "plain_text", name: "GREETING" },
+        ],
+        routes: ["prey.example.com/*"],
+        contentLength: DEPLOYED_CONTENT.length,
+        usage: { used: ["HYPERDRIVE"], envDestructured: false },
+      },
+    ]);
+    expect(parsed.batches[0].coverage[0]).toEqual({ target: "account", op: "listScripts", status: "complete" });
+  });
+
+  it("refuses a partial-scope push and a missing token", async () => {
+    const never = async (): Promise<Response> => {
+      throw new Error("must not send");
+    };
+    const scoped = await runScan(
+      { accountId: "acct", push: "https://hub.example", pushToken: "t", namespace: "tenants" },
+      new FakeCfClient(),
+      never,
+    );
+    expect(scoped.exitCode).toBe(2);
+    expect(scoped.output).toContain("can't be combined with --namespace");
+
+    vi.stubEnv("WULF_HUB_TOKEN", "");
+    try {
+      const tokenless = await runScan({ accountId: "acct", push: "https://hub.example" }, new FakeCfClient(), never);
+      expect(tokenless.exitCode).toBe(2);
+      expect(tokenless.output).toContain("WULF_HUB_TOKEN");
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("fails the run when the hub rejects the push, even with --json", async () => {
+    const { output, exitCode } = await runScan(
+      { accountId: "acct", push: "https://hub.example", pushToken: "t", json: true },
+      new FakeCfClient(),
+      async () => new Response("unauthorized", { status: 401 }),
+    );
+    expect(exitCode).toBe(2);
+    expect(output).toContain("error: push to https://hub.example/ingest/scan failed: HTTP 401 unauthorized");
+  });
+});

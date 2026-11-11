@@ -98,7 +98,7 @@ The first audience is **your own account**. Open-sourcing comes later, and the d
 | `@wulf/cli` | evolves | A thin Node shell: commands, file discovery, disk reads and terminal rendering. `@wulf/core` and `@wulf/analyze` are bundled in by tsup, and `effect` is a runtime dependency. |
 | `@wulf/analyze` | **new (slice 2)** | The rule engine, oxc AST helpers, wrangler parsing and report shaping, moved out of `cli/src`. No Node APIs. `auditProject` and `analyzeAccount` are shared by the CLI and the analyzer Worker. |
 | `@wulf/analyze-poc` | slice 2 | The analyzer Worker and its workerd equivalence tests. Its endpoints move into `@wulf/hub` in slice 3. |
-| `@wulf/hub` | new (slice 3) | The `ScanHub` Durable Object, `ScanWorkflow`, SQLite migrations, R2 export and the graph queries |
+| `@wulf/hub` | **new (slice 3, in progress)** | The `ScanHub` Durable Object, `ScanWorkflow`, SQLite migrations, R2 export and the graph queries |
 | `@wulf/console` | new (slice 6) | Access-protected UI Worker: findings, the graph view, coverage |
 | `@wulf/deploy` | new (slice 6) | Alchemy v2 (Effect) stack: Workflow, Durable Object, R2, Secrets Store, Access app, cron. One command deploys into your own account. |
 | `@wulf/shared` | unchanged until slice 5 | Then `ProbeResult` becomes a type-only re-export from core's Schema, so probe Workers pick up no runtime Effect dependency |
@@ -279,6 +279,32 @@ Each slice ends with the repo green (`pnpm -r typecheck`, all tests) and the CLI
 - Findings lifecycle (open, resolved, suppressed). A partial scan never resolves anything.
 - `wulf scan --push <hub-url>` sends a CLI scan to ScanHub.
 - **Exit:** a cron scan of the research account produces the same findings as `wulf scan`, keeps their identity across two scans, and resolves a finding after the misconfiguration is fixed.
+- **Progress (2026-11-11, branch `gorejared/scan-hub`, stacked on `gorejared/platform-core`):**
+  - **Summaries.** `@wulf/analyze` gained `summarizeScript`/`summarizeSnapshot` and `analyzeSummary`. A summary keeps binding `type` and `name`, routes, the bundle's length and its binding usage (`used`, `envDestructured`), never bundle text or binding values. `analyzeAccount` now goes through a summary too, so the CLI and the hub share one path. The bundle text is kept in memory only for drift rules.
+  - **Parse limit.** `WORKER_PARSE_LIMIT_BYTES` is 1.5 MB. In the hub, a bigger bundle is not parsed, and an `analyze` / `unavailable` coverage entry is recorded instead (items 1 and 2 carried from slice 2). Routing those bundles to a Container is still to do.
+  - **Chunked collection.** `@wulf/core` splits `collectAccount` into `collectScriptNames`, `collectScripts(names)`, `collectNamespaces` and `joinParts`. `collectAccount` composes them, so its output is unchanged.
+  - **`@wulf/hub`:**
+    - **`ScanHub`** is a SQLite Durable Object, one per account. It has the §7 tables plus `scans.account_id/source/result/exported_at`, `findings.resource/last_scan_id/resolved_at`, `coverage.seq` and `occurrences.count`. `begin`, `append` and `complete` are idempotent.
+    - **`ScanWorkflow`** runs these steps: begin → list scripts → collect 4 scripts per step → namespaces → complete.
+    - **The alarm** writes `history/<scan_id>/{scan.json,observations,edges,coverage,findings}.jsonl` to R2, deletes batches, and keeps detail for `KEEP_SCANS` scans.
+    - **HTTP** endpoints are `/findings`, `/scans`, `/scans/:id`, `/findings/suppress|unsuppress` and `/ingest/scan`, plus a cron trigger. Every request needs the `WULF_TOKEN` bearer token; with no token set, every request is refused.
+  - **Finding key** is `findingKey` (`rule_id|resource`), not `rule_id|ref`. `resource` is finer than a ref (`script:x:binding:Y`), so distinct findings never collapse. The ref is stored beside it.
+  - **Resolution is stricter than "partial never resolves".** In a `complete` scan, an unseen finding is kept open in either of these cases:
+    - a read for its target (`script:x`, `namespace:n`, or `account` for namespaces) was denied, unavailable or not analysed;
+    - its rule threw.
+    A scan whose script list failed is `failed` and changes nothing.
+  - **`wulf scan --push <hub-url>`** sends the summary as one batch, using `WULF_HUB_TOKEN`. It refuses `--namespace`, because a scoped scan would resolve findings outside its scope.
+  - **Tests:** hub 12 (workerd, `@cloudflare/vitest-plugin`), analyze 9, cli 58, core 21, analyze-poc 13. The hub suite covers:
+    - equivalence with in-memory `analyzeAccount` (findings, occurrences and coverage);
+    - identity across scans, resolve after fix, and reopen;
+    - partial, denied and over-limit scans;
+    - failed scans and suppression;
+    - idempotency;
+    - a sentinel showing no binding value or bundle text in SQLite or R2;
+    - R2 export and pruning;
+    - HTTP auth and push.
+  - The bundle is 671 KiB gzipped. CI gained a `hub (workerd)` job.
+  - **Not done yet:** the live exit check (cron scan of the research account, compared with `wulf scan`, with a fix-then-resolve run). It needs a read-only token (Workers Scripts Read), and the Vault token had expired. Also not done: the Container route for large bundles, and folding `analyze-poc` into `@wulf/hub`. The oxc loader and shim are copied into hub for now.
 
 ### Slice 4: exposure and data-store graph
 

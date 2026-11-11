@@ -19,3 +19,4 @@ export * from "./engine/runner.js";
 export * from "./parsers/bindings.js";
 export * from "./parsers/wrangler.js";
 export * from "./project.js";
+export * from "./summary.js";
