@@ -1,11 +1,11 @@
 import type { AccountSnapshot, Coverage, RawBinding } from "@wulf/core";
 
-import { buildBindingMap } from "./ast/binding-map.js";
-import { parse, type SourceFile } from "./ast/parse.js";
+import type { SourceFile } from "./ast/parse.js";
 import type { FindingGroup } from "./engine/report.js";
 import type { AccountContext, Finding, ScriptMetadata, Severity, WfPNamespace } from "./engine/rule.js";
 import { atOrAbove, runAccountRules, type RuleError } from "./engine/runner.js";
 import type { BindingType, DeclaredBinding } from "./parsers/bindings.js";
+import { bindingMapOf, summarizeSnapshot, type AccountSummary } from "./summary.js";
 
 /**
  * Map a Cloudflare API binding `type` to a capability BindingType. Returns
@@ -58,12 +58,29 @@ export interface AccountAnalysis {
 /**
  * Run every account rule over a collected snapshot. Pure: no API calls, so
  * the CLI and a Worker given the same snapshot produce the same groups.
+ *
+ * The snapshot goes through the same summary ScanHub stores, so a scan analysed
+ * from stored batches gives the same findings as one analysed in memory.
  */
 export function analyzeAccount(
   snapshot: AccountSnapshot,
   options: AccountAnalysisOptions = {},
 ): AccountAnalysis {
-  const ctx = accountContext(snapshot, options.localSources);
+  const contents = options.localSources ? bundleContents(snapshot) : undefined;
+  return analyzeSummary(summarizeSnapshot(snapshot), { ...options, ...(contents && { contents }) });
+}
+
+export interface SummaryAnalysisOptions extends AccountAnalysisOptions {
+  /** Deployed bundle text per script, for drift rules. Never stored. */
+  contents?: ReadonlyMap<string, string>;
+}
+
+/** Run every account rule over a summarized snapshot (e.g. one rebuilt from ScanHub batches). */
+export function analyzeSummary(
+  summary: AccountSummary,
+  options: SummaryAnalysisOptions = {},
+): AccountAnalysis {
+  const ctx = summaryContext(summary, options.localSources, options.contents);
   const outcome = runAccountRules(ctx);
   const ignore = options.ignore ?? new Set<string>();
   const kept = outcome.findings.filter((f) => !ignore.has(f.rule_id));
@@ -71,35 +88,47 @@ export function analyzeAccount(
   const groups = groupByResource(kept).map((g) => ({ ...g, findings: atOrAbove(g.findings, min) }));
   return {
     groups,
-    gaps: snapshot.coverage.filter((c) => c.status !== "complete"),
+    gaps: summary.coverage.filter((c) => c.status !== "complete"),
     errors: outcome.errors,
   };
 }
 
-/**
- * Shape a collected snapshot into the rules' AccountContext. A read that didn't
- * complete becomes an empty value here (the rules expect arrays); the
- * snapshot's coverage records that those rules ran on partial data.
- */
+/** Shape a collected snapshot into the rules' AccountContext. */
 export function accountContext(
   snapshot: AccountSnapshot,
   localSources?: ReadonlyMap<string, SourceFile>,
 ): AccountContext {
-  const scripts: ScriptMetadata[] = snapshot.scripts.map((s) => {
+  return summaryContext(summarizeSnapshot(snapshot), localSources, bundleContents(snapshot));
+}
+
+const bundleContents = (snapshot: AccountSnapshot): Map<string, string> =>
+  new Map(snapshot.scripts.flatMap((s) => (s.content !== undefined ? [[s.name, s.content] as const] : [])));
+
+/**
+ * Shape a summary into the rules' AccountContext. A read that didn't complete
+ * becomes an empty value here (the rules expect arrays); the summary's coverage
+ * records that those rules ran on partial data.
+ */
+export function summaryContext(
+  summary: AccountSummary,
+  localSources?: ReadonlyMap<string, SourceFile>,
+  contents?: ReadonlyMap<string, string>,
+): AccountContext {
+  const scripts: ScriptMetadata[] = summary.scripts.map((s) => {
     const declared = (s.bindings ?? [])
       .map(mapApiBinding)
       .filter((b): b is NonNullable<typeof b> => b !== undefined);
+    const content = contents?.get(s.name);
     return {
       name: s.name,
       declared,
       routes: (s.routes ?? []).map((pattern) => ({ pattern })),
-      content: s.content,
-      bindingMap:
-        s.content !== undefined ? buildBindingMap(parse(`script:${s.name}`, s.content)) : undefined,
+      ...(content !== undefined && { content }),
+      bindingMap: s.usage ? bindingMapOf(s.usage) : undefined,
     };
   });
 
-  const namespaces: WfPNamespace[] = snapshot.namespaces.map((raw) => ({
+  const namespaces: WfPNamespace[] = summary.namespaces.map((raw) => ({
     name: raw.name,
     trusted: Boolean(raw.trusted),
     hasOutbound: Boolean(raw.outbound),
@@ -108,7 +137,7 @@ export function accountContext(
   }));
 
   return {
-    accountId: snapshot.accountId,
+    accountId: summary.accountId,
     scripts,
     namespaces,
     localSources: localSources ? new Map(localSources) : undefined,

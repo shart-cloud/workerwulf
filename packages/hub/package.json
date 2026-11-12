@@ -1,0 +1,28 @@
+{
+  "name": "@wulf/hub",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ScanHub (Durable Object, SQLite) and ScanWorkflow: scheduled account scans, findings lifecycle and R2 history (POSTURE_PLAN.md slice 3).",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "bundle": "wrangler deploy --dry-run --outdir dist",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "@oxc-parser/binding-wasm32-wasip1": "0.158.0",
+    "@wulf/analyze": "workspace:*",
+    "@wulf/core": "workspace:*",
+    "effect": "4.1.3",
+    "oxc-parser": "0.158.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.4.7",
+    "@cloudflare/workers-types": "^4.20250101.0",
+    "typescript": "^5.6.0",
+    "vite": "7.3.7",
+    "vitest": "4.1.11",
+    "wrangler": "4.152.0"
+  }
+}

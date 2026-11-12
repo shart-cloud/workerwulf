@@ -76,6 +76,7 @@ program
   .option("--severity <level>", "minimum severity to report (default: low)")
   .option("--ignore <ids>", "comma-separated rule IDs to suppress")
   .option("--save <dir>", "persist the run report JSON to a directory for `wulf report`")
+  .option("--push <hub-url>", "send the scan to a ScanHub (token from WULF_HUB_TOKEN)")
   .action(async (opts: Record<string, unknown>) => {
     const severity = opts["severity"] as string | undefined;
     if (severity && !SEVERITIES.includes(severity as Severity)) {
@@ -83,6 +84,7 @@ program
       process.exit(2);
     }
     const options: ScanOptions = {
+      push: opts["push"] as string | undefined,
       accountId: opts["accountId"] as string | undefined,
       apiToken: opts["apiToken"] as string | undefined,
       source: opts["source"] as string | undefined,
