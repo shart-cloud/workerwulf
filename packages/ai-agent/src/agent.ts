@@ -119,7 +119,9 @@ export async function runAiAgent(env: Env, params: AiAgentRunParams): Promise<Ai
     const inputScan = await lfScanInput(env, task, guard.probeId, inputPolicy);
     guardResults.total_guard_latency_ms += inputScan.latency_ms;
     const action: GateAction =
-      inputPolicy === "block" && inputScan.decision === "block" ? "blocked" : "allowed";
+      inputPolicy === "block" && (inputScan.decision !== "allow" || Boolean(inputScan.error))
+        ? "blocked"
+        : "allowed";
     guardResults.scan_input = { ...inputScan, gate_action: action };
     if (action === "blocked") {
       guardResults.pipeline_blocked = true;
@@ -144,7 +146,9 @@ export async function runAiAgent(env: Env, params: AiAgentRunParams): Promise<Ai
     const outputScan = await lfScanOutput(env, generatedCode, guard.probeId, outputPolicy);
     guardResults.total_guard_latency_ms += outputScan.latency_ms;
     const action: GateAction =
-      outputPolicy === "block" && outputScan.decision === "block" ? "blocked" : "allowed";
+      outputPolicy === "block" && (outputScan.decision !== "allow" || Boolean(outputScan.error))
+        ? "blocked"
+        : "allowed";
     guardResults.scan_output = { ...outputScan, gate_action: action };
     if (action === "blocked") {
       guardResults.pipeline_blocked = true;
@@ -209,7 +213,9 @@ export async function runAiAgent(env: Env, params: AiAgentRunParams): Promise<Ai
     );
     guardResults.total_guard_latency_ms += traceScan.latency_ms;
     const action: GateAction =
-      tracePolicy === "block" && traceScan.decision === "block" ? "flagged" : "allowed";
+      Boolean(traceScan.error) || (tracePolicy === "block" && traceScan.decision !== "allow")
+        ? "flagged"
+        : "allowed";
     guardResults.scan_trace = { ...traceScan, gate_action: action };
     // Note: scan-trace is post-execution, so "flagged" here means "future turns should be reviewed".
     // The current turn's sandbox result has already been computed.
@@ -347,14 +353,16 @@ async function executeInSandbox(
   // Resolve the child's egress posture:
   //   "null"      → null      (platform blocks every outbound subrequest)
   //   "allowlist" → Fetcher   (subrequests routed through the egress proxy; §7 item 1)
-  //   "open"      → undefined  (inherit the loader's default = open internet)
+  //   "open"      → undefined (only permitted when WULF_ALLOW_OPEN_EGRESS === "true"; F-002)
   let globalOutbound: Fetcher | null | undefined;
   if (params.globalOutbound === "null") {
     globalOutbound = null;
   } else if (params.globalOutbound === "allowlist") {
     globalOutbound = buildEgressFetcher(env.LOADER, parseAllowlist(env.WULF_EGRESS_ALLOWLIST));
-  } else {
+  } else if (env.WULF_ALLOW_OPEN_EGRESS === "true") {
     globalOutbound = undefined;
+  } else {
+    throw new Error("globalOutbound='open' is disabled unless WULF_ALLOW_OPEN_EGRESS='true'");
   }
 
   const codeObj: WorkerCode = {

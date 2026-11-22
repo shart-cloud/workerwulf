@@ -19,6 +19,10 @@ export interface Env {
   WULF_DNS_EXFIL_ZONE?: string;
   // Comma-separated host allowlist for the runtime egress proxy (global_outbound=allowlist).
   WULF_EGRESS_ALLOWLIST?: string;
+  // Shared secret gating /agent and /probe/* (F-003). Fail-closed when unset.
+  WULF_AUTH_TOKEN?: string;
+  // Explicitly opt in to unrestricted dynamic-worker egress for controlled research runs (F-002).
+  WULF_ALLOW_OPEN_EGRESS?: string;
   [key: string]: unknown;
 }
 
@@ -64,20 +68,36 @@ export class AiPlayApi extends WorkerEntrypoint<Env> {
   }
 }
 
+function authorized(req: Request, env: Env): boolean {
+  const expected = env.WULF_AUTH_TOKEN;
+  if (!expected) return false;
+  const auth = req.headers.get("authorization") ?? "";
+  const presented = auth.startsWith("Bearer ")
+    ? auth.slice("Bearer ".length)
+    : (req.headers.get("x-wulf-auth") ?? "");
+  if (presented.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= presented.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
+}
+
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
 
     if (url.pathname === "/" || url.pathname === "/probes") {
+      if (!authorized(req, env)) return json({ error: "unauthorized" }, 401);
       return json({ probes: Object.keys(probes) });
     }
 
     if (url.pathname === "/agent") {
+      if (!authorized(req, env)) return json({ error: "unauthorized" }, 401);
       return handleAgent(req, env, ctx);
     }
 
     const match = url.pathname.match(/^\/probe\/([A-Z0-9-]+)$/);
     if (!match) return json({ error: "not_found" }, 404);
+    if (!authorized(req, env)) return json({ error: "unauthorized" }, 401);
 
     const testId = match[1]!;
     const probe = probes[testId];
@@ -94,7 +114,6 @@ export default {
           test_id: testId,
           error: "probe_threw",
           message: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
         },
         500,
       );
@@ -114,6 +133,9 @@ async function handleAgent(req: Request, env: Env, ctx: ExecutionContext): Promi
   const runId = body.run_id ?? url.searchParams.get("run_id") ?? crypto.randomUUID();
   const promptTier = (body.prompt_tier ?? url.searchParams.get("prompt_tier") ?? "naive") as AiAgentRunParams["promptTier"];
   const globalOutbound = (body.global_outbound ?? url.searchParams.get("global_outbound") ?? "null") as AiAgentRunParams["globalOutbound"];
+  if (globalOutbound === "open" && env.WULF_ALLOW_OPEN_EGRESS !== "true") {
+    return json({ error: "forbidden", message: "global_outbound=open is disabled" }, 403);
+  }
   const model = body.model ?? url.searchParams.get("model") ?? "@cf/meta/llama-3.1-8b-instruct-fp8";
   const conversationId = body.conversation_id ?? url.searchParams.get("conversation_id") ?? runId;
   const turn = body.turn ?? parseInt(url.searchParams.get("turn") ?? "1", 10);

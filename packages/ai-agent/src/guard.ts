@@ -17,6 +17,8 @@ export interface PromptGuardBothResult {
   would_block: boolean;
 }
 
+const GUARD_TIMEOUT_MS = 10_000;
+
 export async function guardClassify(
   env: Env,
   text: string,
@@ -43,6 +45,7 @@ export async function guardClassify(
           threshold: opts.threshold ?? 0.5,
           policy: opts.policy ?? "log",
         }),
+        signal: AbortSignal.timeout(GUARD_TIMEOUT_MS),
       }),
     );
 
@@ -68,7 +71,7 @@ export async function guardClassifyBoth(
 ): Promise<PromptGuardBothResult> {
   if (!env.PROMPT_GUARD) {
     const fb = fallback("PROMPT_GUARD binding not available", opts);
-    return { input: fb, output: fb, would_block: false };
+    return { input: fb, output: fb, would_block: true };
   }
 
   try {
@@ -83,18 +86,19 @@ export async function guardClassifyBoth(
           threshold: opts.threshold ?? 0.5,
           policy: opts.policy ?? "log",
         }),
+        signal: AbortSignal.timeout(GUARD_TIMEOUT_MS),
       }),
     );
 
     if (!res.ok) {
       const both = fallback(`Guard returned ${res.status}`, opts);
-      return { input: both, output: both, would_block: false };
+      return { input: both, output: both, would_block: true };
     }
 
     return (await res.json()) as PromptGuardBothResult;
   } catch (err) {
     const both = fallback(err instanceof Error ? err.message : String(err), opts);
-    return { input: both, output: both, would_block: false };
+    return { input: both, output: both, would_block: true };
   }
 }
 
@@ -116,12 +120,13 @@ function fallback(
   error: string,
   opts: { threshold?: number; policy?: "block" | "log" | "pass" },
 ): PromptGuardResult {
+  // Fail closed on guard error paths (F-005).
   return {
-    label: "BENIGN",
-    score: 0,
-    logits: { benign: 0, malicious: 0 },
+    label: "MALICIOUS",
+    score: 1,
+    logits: { benign: 0, malicious: 1 },
     latency_ms: 0,
-    blocked: 0,
+    blocked: 1,
     policy: opts.policy ?? "log",
     threshold: opts.threshold ?? 0.5,
     error,

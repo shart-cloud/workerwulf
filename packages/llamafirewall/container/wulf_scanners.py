@@ -88,8 +88,8 @@ class WulfLLMClient(LLMClient):
         api_key = os.environ.get("CF_API_TOKEN", "")
         self.client = OpenAI(api_key=api_key, base_url=WORKERS_AI_BASE_URL)
         LOG.info(
-            "[WulfLLMClient] initialized model=%s base=%s token_present=%s",
-            self.model_name, WORKERS_AI_BASE_URL, bool(api_key),
+            "[WulfLLMClient] initialized model=%s configured=%s",
+            self.model_name, bool(api_key),
         )
 
     async def call(  # type: ignore[override]
