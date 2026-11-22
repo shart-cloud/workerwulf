@@ -15,9 +15,19 @@ export type Platform =
   | "cloudflare-proxied-origin"
   | "cloudflare-unknown"
   | "celld"
+  | "openorange"
+  | "rivet"
   | "not-cloudflare";
 
-export type Hypothesis = "cloudflare" | "worker" | "pages" | "origin" | "celld" | "not-cloudflare";
+export type Hypothesis =
+  | "cloudflare"
+  | "worker"
+  | "pages"
+  | "origin"
+  | "celld"
+  | "openorange"
+  | "rivet"
+  | "not-cloudflare";
 
 export interface Signal {
   id: string;
@@ -281,8 +291,32 @@ export async function fingerprint(
     add({ id: "cf-access", points_to: "cloudflare", weight: 100, detail: "baseline redirects to Cloudflare Access login" });
   }
 
+  // Rivet / OpenOrange runtime signals (source-verified against rivet-dev/open-orange):
+  //  - `x-open-orange` / `x-open-orange-*` headers or OpenOrange error classes
+  //    (`WorkerLoaderLimitError`, `ORANGE_WORKER_LOADER_`, `@open-orange/`).
+  //  - `x-rivet-error` (e.g. `auth.*`) or `x-rivet-ray-id` headers from Rivet Engine/Gateway.
+  for (const r of observed) {
+    for (const [name, value] of Object.entries(r.headers)) {
+      if (name === "x-open-orange" || name.startsWith("x-open-orange-")) {
+        add({ id: "openorange-header", points_to: "openorange", weight: 100, detail: `${name}: ${value}` });
+      }
+      if (name === "x-rivet-error" && /^[a-z_]+\.[a-z_]+$/i.test(value.trim())) {
+        add({ id: "rivet-error-header", points_to: "rivet", weight: 100, detail: `x-rivet-error: ${value}` });
+      }
+      if (name === "x-rivet-ray-id") {
+        add({ id: "rivet-ray-header", points_to: "rivet", weight: 100, detail: `x-rivet-ray-id: ${value}` });
+      }
+    }
+    if (/WorkerLoaderLimitError|ORANGE_WORKER_LOADER_|@open-orange\/|__open-orange\//.test(r.body)) {
+      add({ id: "openorange-body-marker", points_to: "openorange", weight: 100, detail: `OpenOrange runtime marker in body at ${pathOf(r.url)}` });
+    } else if (/@rivetkit\/|rivet_rivetkit_actor_/i.test(r.body)) {
+      add({ id: "rivet-body-marker", points_to: "rivet", weight: 80, detail: `RivetKit marker in body at ${pathOf(r.url)}` });
+    }
+  }
+
   const celldDetected = signals.some((s) => s.id === "celld-health");
-  if (!onCloudflare && !celldDetected && !signals.some((s) => s.id === "cdn-cgi-trace")) {
+  const rivetOrOrangeDetected = signals.some((s) => s.points_to === "openorange" || s.points_to === "rivet");
+  if (!onCloudflare && !celldDetected && !rivetOrOrangeDetected && !signals.some((s) => s.id === "cdn-cgi-trace")) {
     add({ id: "no-cf-edge", points_to: "not-cloudflare", weight: 100, detail: "no server: cloudflare, cf-ray, or /cdn-cgi/trace" });
   }
 
@@ -304,13 +338,17 @@ export async function fingerprint(
 export function verdict(signals: Signal[]): { platform: Platform; confidence: Fingerprint["confidence"] } {
   const decisive = (h: Hypothesis): boolean => signals.some((s) => s.points_to === h && s.weight >= 100);
   if (decisive("celld")) return { platform: "celld", confidence: "high" };
+  if (decisive("openorange")) return { platform: "openorange", confidence: "high" };
+  if (decisive("rivet")) return { platform: "rivet", confidence: "high" };
   if (decisive("pages")) return { platform: "cloudflare-pages", confidence: "high" };
   if (decisive("worker")) return { platform: "cloudflare-workers", confidence: "high" };
+  const sum = (h: Hypothesis): number =>
+    signals.filter((s) => s.points_to === h).reduce((n, s) => n + s.weight, 0);
+  if (sum("openorange") >= 50) return { platform: "openorange", confidence: "medium" };
+  if (sum("rivet") >= 50) return { platform: "rivet", confidence: "medium" };
   if (decisive("not-cloudflare") && !decisive("cloudflare")) {
     return { platform: "not-cloudflare", confidence: "medium" };
   }
-  const sum = (h: Hypothesis): number =>
-    signals.filter((s) => s.points_to === h).reduce((n, s) => n + s.weight, 0);
   const score = sum("worker") - sum("origin");
   const confidence = Math.abs(score) >= 50 ? "high" : Math.abs(score) >= 25 ? "medium" : "low";
   if (score > 0) return { platform: "cloudflare-workers", confidence };

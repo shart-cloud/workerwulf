@@ -194,6 +194,86 @@ describe("wulf probe — celld operator exposure", () => {
   });
 });
 
+describe("wulf probe — Rivet / OpenOrange", () => {
+  const ACTOR_NAMES = JSON.stringify({
+    names: { "counter-5c8cd02c": { metadata: {} }, "open-orange-queue": { metadata: {} } },
+  });
+
+  it("fingerprints an OpenOrange runtime and flags unauthenticated Rivet Engine + exposed metrics", async () => {
+    const worker = new FakeWorker((_r, url): Partial<ProbeResponse> => {
+      if (url.port === "6420" && url.pathname === "/actors/names") {
+        return { status: 200, headers: { "content-type": "application/json" }, body: ACTOR_NAMES };
+      }
+      if (url.port === "6420" && url.pathname === "/metrics") {
+        return { status: 200, headers: { "content-type": "text/plain" }, body: 'rivet_rivetkit_actor_active_count{actor_name="counter"} 2\n' };
+      }
+      return { headers: { "x-open-orange": "runtime-node" }, body: "<h1>orange app</h1>" };
+    });
+    const { output } = await probe(
+      "https://orange.example.com/",
+      { json: true, allow: "orange.example.com", rivetEngine: "https://orange.example.com:6420" },
+      worker,
+    );
+    const findings = JSON.parse(output).sources[0].findings as { rule_id: string; severity: string; message: string }[];
+    const fp = findings.find((f) => f.rule_id === "WF-DAST-FP-01");
+    expect(fp?.message).toMatch(/Platform: openorange \(high confidence\)/);
+    const r1 = findings.find((f) => f.rule_id === "WF-DAST-RIVET-01");
+    expect(r1?.severity).toBe("critical");
+    expect(r1?.message).toMatch(/counter-5c8cd02c/);
+    expect(findings.some((f) => f.rule_id === "WF-DAST-RIVET-04")).toBe(true);
+  });
+
+  it("flags Rivet Engine accepting the default local dev token (Bearer default)", async () => {
+    const worker = new FakeWorker((req, url): Partial<ProbeResponse> => {
+      if (url.port === "6420" && url.pathname === "/actors/names") {
+        if (req.headers?.["authorization"] === "Bearer default") {
+          return { status: 200, headers: { "content-type": "application/json" }, body: ACTOR_NAMES };
+        }
+        return { status: 401, headers: { "x-rivet-error": "auth.missing_token" }, body: '{"group":"auth"}' };
+      }
+      return { body: "ok" };
+    });
+    const { output } = await probe(
+      "https://app.example.com/",
+      { json: true, allow: "app.example.com", rivetEngine: "https://app.example.com:6420" },
+      worker,
+    );
+    const findings = JSON.parse(output).sources[0].findings as { rule_id: string; message: string }[];
+    const r1 = findings.find((f) => f.rule_id === "WF-DAST-RIVET-01");
+    expect(r1?.message).toMatch(/Bearer default/);
+    expect(findings.some((f) => f.rule_id === "WF-DAST-RIVET-02")).toBe(false);
+  });
+
+  it("flags auth-protected but reachable --rivet-engine as WF-DAST-RIVET-02 and active /__migrate-d1 as WF-DAST-RIVET-03", async () => {
+    const worker = new FakeWorker((req, url): Partial<ProbeResponse> => {
+      if (url.port === "6420" && url.pathname === "/actors/names") {
+        return { status: 401, headers: { "x-rivet-error": "auth.invalid_token" }, body: '{"group":"auth"}' };
+      }
+      if (req.method === "POST" && url.pathname.startsWith("/__migrate-d1/")) {
+        return { status: 401, headers: { "content-type": "application/json" }, body: '{"error":{"code":"migrate_d1.unauthorized","message":"missing or wrong migrator token"}}' };
+      }
+      return { body: "ok" };
+    });
+    const { output } = await probe(
+      "https://app.example.com/",
+      { json: true, allow: "app.example.com", rivetEngine: "https://app.example.com:6420", allowPost: true },
+      worker,
+    );
+    const found = ids(output);
+    expect(found).toContain("WF-DAST-RIVET-02");
+    expect(found).toContain("WF-DAST-RIVET-03");
+    expect(found).not.toContain("WF-DAST-RIVET-01");
+  });
+
+  it("does not probe /actors/names or /metrics on a plain Cloudflare target", async () => {
+    const worker = new FakeWorker(() => ({ body: "ok" }));
+    const { output } = await probe("https://api.example.com/", { json: true, allow: "api.example.com" }, worker);
+    expect(ids(output)).not.toContain("WF-DAST-RIVET-01");
+    expect(worker.seen.some((r) => new URL(r.url).pathname === "/actors/names")).toBe(false);
+    expect(worker.seen.some((r) => new URL(r.url).pathname === "/metrics")).toBe(false);
+  });
+});
+
 describe("wulf probe — budget & passive", () => {
   it("passive mode sends only fingerprint requests and finds no vuln rules", async () => {
     const worker = new FakeWorker(() => ({ body: "ok" }));

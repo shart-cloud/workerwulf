@@ -32,6 +32,11 @@ export interface ProbeContext {
    * only if the fingerprint already identified celld.
    */
   celldInternal?: URL;
+  /**
+   * Suspected Rivet Engine / Gateway URL for OpenOrange or RivetKit deployments,
+   * from `--rivet-engine`. Added to scope by the command.
+   */
+  rivetEngine?: URL;
   /** Fresh unguessable token for cache-busters and reflection markers. */
   nonce(): string;
 }

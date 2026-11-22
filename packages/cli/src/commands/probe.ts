@@ -28,6 +28,8 @@ export interface ProbeOptions {
   authHeader?: string;
   /** Suspected celld internal/operator listener URL (host auto-added to scope). */
   celldInternal?: string;
+  /** Suspected Rivet Engine / Gateway URL for OpenOrange or RivetKit (host auto-added to scope). */
+  rivetEngine?: string;
   /** Permit POST requests with malformed bodies (off by default). */
   allowPost?: boolean;
   rps?: number;
@@ -77,13 +79,22 @@ export async function runProbe(
     }
   }
 
-  // Scope. The target host (and the celld-internal host, which is the same node)
-  // are implicitly in scope; everything else must be listed in --scope or
-  // --allow. This is the authorization gate: without a valid in-scope target the
-  // scanner refuses to send a single request.
+  let rivetEngine: URL | undefined;
+  if (options.rivetEngine) {
+    try {
+      rivetEngine = new URL(options.rivetEngine);
+    } catch {
+      return { output: `error: --rivet-engine must be a URL`, exitCode: 2 };
+    }
+  }
+
+  // Scope. The target host (and any explicit internal listener host) are
+  // implicitly in scope; everything else must be listed in --scope or --allow.
+  // This is the authorization gate: without a valid in-scope target the scanner
+  // refuses to send a single request.
   let scope: Scope;
   try {
-    scope = buildScope(target, options, celldInternal);
+    scope = buildScope(target, options, celldInternal, rivetEngine);
   } catch (err) {
     return { output: `error: ${(err as Error).message}`, exitCode: 2 };
   }
@@ -127,6 +138,7 @@ export async function runProbe(
     auth,
     allowPost: Boolean(options.allowPost),
     celldInternal,
+    rivetEngine,
     nonce,
   };
 
@@ -156,9 +168,10 @@ export async function runProbe(
   return { output, exitCode };
 }
 
-function buildScope(target: URL, options: ProbeOptions, celldInternal?: URL): Scope {
+function buildScope(target: URL, options: ProbeOptions, celldInternal?: URL, rivetEngine?: URL): Scope {
   const scopes: Scope[] = [parseScope([target.hostname])];
   if (celldInternal) scopes.push(parseScope([celldInternal.hostname]));
+  if (rivetEngine) scopes.push(parseScope([rivetEngine.hostname]));
   if (options.scope) scopes.push(loadScopeFile(options.scope));
   if (options.allow) scopes.push(parseScope(parseList(options.allow)));
   return mergeScopes(...scopes);
