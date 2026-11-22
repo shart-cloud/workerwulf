@@ -75,9 +75,10 @@ async function runLlg3(
     const raw = extractText(aiResult);
     return parseGuardResponse(raw, latency_ms);
   } catch (err) {
+    // Fail closed on AI.run errors (F-006).
     return {
       raw_response: "",
-      safe: true,
+      safe: false,
       categories_violated: [],
       category_labels: [],
       s14_triggered: false,
@@ -99,13 +100,14 @@ function extractText(aiResult: unknown): string {
       }
     }
   }
-  return String(aiResult);
+  return "";
 }
 
 function parseGuardResponse(raw: string, latency_ms: number): Llg3Result {
   const trimmed = raw.trim().toLowerCase();
+  const firstLine = trimmed.split(/\r?\n/)[0]?.trim() ?? "";
 
-  if (trimmed === "safe" || trimmed.startsWith("safe")) {
+  if (firstLine === "safe") {
     return {
       raw_response: raw.trim(),
       safe: true,
@@ -113,6 +115,18 @@ function parseGuardResponse(raw: string, latency_ms: number): Llg3Result {
       category_labels: [],
       s14_triggered: false,
       latency_ms,
+    };
+  }
+
+  if (!trimmed) {
+    return {
+      raw_response: "",
+      safe: false,
+      categories_violated: [],
+      category_labels: [],
+      s14_triggered: false,
+      latency_ms,
+      error: "empty_guard_response",
     };
   }
 

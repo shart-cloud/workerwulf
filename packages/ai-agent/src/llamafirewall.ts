@@ -25,14 +25,19 @@ interface TraceMessage {
   content: string;
 }
 
+const SCAN_TIMEOUT_MS = 10_000;
+const TRACE_TIMEOUT_MS = 15_000;
+
 async function postScan(
   env: Env,
   path: string,
   body: unknown,
   endpoint: string,
+  policy: "block" | "log" | "pass",
+  timeoutMs = SCAN_TIMEOUT_MS,
 ): Promise<LlamaFirewallScanResult> {
   if (!env.LLAMAFIREWALL) {
-    return fallback(endpoint, "LLAMAFIREWALL binding not available");
+    return fallback(endpoint, "LLAMAFIREWALL binding not available", policy);
   }
   try {
     const res = await env.LLAMAFIREWALL.fetch(
@@ -40,14 +45,15 @@ async function postScan(
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(timeoutMs),
       }),
     );
     if (!res.ok) {
-      return fallback(endpoint, `HTTP ${res.status}: ${await res.text()}`);
+      return fallback(endpoint, `HTTP ${res.status}: ${await res.text()}`, policy);
     }
     return (await res.json()) as LlamaFirewallScanResult;
   } catch (err) {
-    return fallback(endpoint, err instanceof Error ? err.message : String(err));
+    return fallback(endpoint, err instanceof Error ? err.message : String(err), policy);
   }
 }
 
@@ -57,7 +63,7 @@ export async function lfScanInput(
   probe_id?: string,
   policy: "block" | "log" | "pass" = "log",
 ): Promise<LlamaFirewallScanResult> {
-  return postScan(env, "/scan-input", { text, probe_id, policy }, "scan-input");
+  return postScan(env, "/scan-input", { text, probe_id, policy }, "scan-input", policy);
 }
 
 export async function lfScanOutput(
@@ -66,7 +72,7 @@ export async function lfScanOutput(
   probe_id?: string,
   policy: "block" | "log" | "pass" = "log",
 ): Promise<LlamaFirewallScanResult> {
-  return postScan(env, "/scan-output", { text, probe_id, policy }, "scan-output");
+  return postScan(env, "/scan-output", { text, probe_id, policy }, "scan-output", policy);
 }
 
 export async function lfScanTrace(
@@ -75,7 +81,14 @@ export async function lfScanTrace(
   probe_id?: string,
   policy: "block" | "log" | "pass" = "log",
 ): Promise<LlamaFirewallScanResult> {
-  return postScan(env, "/scan-trace", { messages, probe_id, policy }, "scan-trace");
+  return postScan(
+    env,
+    "/scan-trace",
+    { messages, probe_id, policy },
+    "scan-trace",
+    policy,
+    TRACE_TIMEOUT_MS,
+  );
 }
 
 export async function lfReport(env: Env, probeId?: string): Promise<unknown> {
@@ -87,13 +100,20 @@ export async function lfReport(env: Env, probeId?: string): Promise<unknown> {
   return res.json();
 }
 
-function fallback(endpoint: string, error: string): LlamaFirewallScanResult {
+function fallback(
+  endpoint: string,
+  error: string,
+  policy: "block" | "log" | "pass",
+): LlamaFirewallScanResult {
+  // Fail closed under "block" so a degraded/timed-out scanner never allows
+  // unscanned input or code through the gate (F-001).
   return {
-    decision: "allow",
+    decision: policy === "block" ? "block" : "allow",
     reason: `binding_error:${endpoint}`,
-    score: 0,
+    score: policy === "block" ? 1 : 0,
     scanner_breakdown: {},
     latency_ms: 0,
     error,
+    policy,
   };
 }

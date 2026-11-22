@@ -198,9 +198,13 @@ export class PreyDurableObjectSecure implements DurableObject {
     }
   }
 
+  private isAllowedPath(value: string): boolean {
+    return /^[a-zA-Z0-9_./:-]+$/.test(value) && !value.includes("..");
+  }
+
   private attachDb(path: string): unknown {
     try {
-      if (/['"\\]/.test(path)) throw new Error("invalid path characters");
+      if (!this.isAllowedPath(path)) throw new Error("invalid path characters");
       this.sql.exec(`ATTACH DATABASE '${path}' AS attached`);
       return { path, allowed: true };
     } catch (err) {
@@ -234,7 +238,7 @@ export class PreyDurableObjectSecure implements DurableObject {
 
   private loadExtension(ext: string): unknown {
     try {
-      if (/['"\\]/.test(ext)) throw new Error("invalid extension name");
+      if (!this.isAllowedPath(ext)) throw new Error("invalid extension name");
       this.sql.exec(`SELECT load_extension('${ext}')`);
       return { ext, allowed: true };
     } catch (err) {
@@ -249,14 +253,14 @@ export class PreyDurableObjectSecure implements DurableObject {
   private fileIo(path: string): unknown {
     const results: Record<string, unknown> = {};
     try {
-      if (/['"\\]/.test(path)) throw new Error("invalid path characters");
+      if (!this.isAllowedPath(path)) throw new Error("invalid path characters");
       this.sql.exec(`SELECT writefile('${path}', 'wulf-test')`);
       results.writefile = "succeeded";
     } catch (err) {
       results.writefile = err instanceof Error ? err.message : String(err);
     }
     try {
-      if (/['"\\]/.test(path)) throw new Error("invalid path characters");
+      if (!this.isAllowedPath(path)) throw new Error("invalid path characters");
       const cursor = this.sql.exec(`SELECT readfile('${path}') AS content`);
       results.readfile = [...cursor];
     } catch (err) {

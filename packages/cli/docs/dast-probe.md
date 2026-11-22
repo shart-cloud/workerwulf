@@ -46,8 +46,8 @@ program's in-scope assets). The code enforces three guardrails:
   strong hex `ETag` without edge caching (Workers Static Assets), and so on.
 
 The verdict is one of `cloudflare-workers`, `cloudflare-pages`,
-`cloudflare-proxied-origin`, `cloudflare-unknown`, `celld`, or `not-cloudflare`,
-with a `high`/`medium`/`low` confidence.
+`cloudflare-proxied-origin`, `cloudflare-unknown`, `celld`, `openorange`,
+`rivet`, or `not-cloudflare`, with a `high`/`medium`/`low` confidence.
 
 **celld** (the self-hosted Workers/Durable Objects runtime) is distinguished
 from Cloudflare's edge by its public listener, which reserves
@@ -106,6 +106,10 @@ back-references it, same as the static rules).
 | `WF-DAST-WS-01` | medium/high | Durable Object / Agents SDK WebSocket accepts an unauthenticated upgrade (high if `cf_agent_state` leaks) |
 | `WF-DAST-CELLD-01` | critical | celld operator API (`/state`) reachable unauthenticated → `/evict`, `/do`, `/shutdown` exposed too |
 | `WF-DAST-CELLD-02` | high | celld peer-protocol port reachable from the scanner (plaintext transport off a private network) |
+| `WF-DAST-RIVET-01` | critical | Rivet Engine `/actors/names` reachable unauthenticated or with default `Bearer default` admin token |
+| `WF-DAST-RIVET-02` | high | Rivet Engine / Gateway control plane (`--rivet-engine`) reachable from scanner network |
+| `WF-DAST-RIVET-03` | high | OpenOrange live-migration route (`/__migrate-d1/*`) still active (requires `--allow-post`) |
+| `WF-DAST-RIVET-04` | medium | RivetKit Prometheus `/metrics` endpoint exposed (`rivet_rivetkit_actor_*` series) |
 
 ### False-positive controls
 
@@ -131,6 +135,7 @@ back-references it, same as the static rules).
 --passive             fingerprint only; skip every active check
 --auth-header "N: v"  credential for WF-DAST-CACHE-02 (e.g. "Cookie: session=…")
 --celld-internal <url> suspected celld internal/operator listener to check for exposure
+--rivet-engine <url>  suspected Rivet Engine / Gateway URL (OpenOrange / RivetKit) to check for exposure
 --allow-post          permit POST requests with malformed bodies
 --rps <n>             requests per second (default 5)
 --max-requests <n>    hard request budget (default 300)

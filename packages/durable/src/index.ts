@@ -16,7 +16,22 @@ export interface Env {
   WULF_CALLBACK_HTTP_BASE?: string;
   WULF_DNS_EXFIL_ZONE?: string;
   WULF_DYNAMIC_BASE_URL?: string;
+  // Shared secret gating /probes and /probe/* (F-003). Fail-closed when unset.
+  WULF_AUTH_TOKEN?: string;
   [key: string]: unknown;
+}
+
+function authorized(req: Request, env: Env): boolean {
+  const expected = env.WULF_AUTH_TOKEN;
+  if (!expected) return false;
+  const auth = req.headers.get("authorization") ?? "";
+  const presented = auth.startsWith("Bearer ")
+    ? auth.slice("Bearer ".length)
+    : (req.headers.get("x-wulf-auth") ?? "");
+  if (presented.length !== expected.length) return false;
+  let diff = 0;
+  for (let i = 0; i < expected.length; i++) diff |= presented.charCodeAt(i) ^ expected.charCodeAt(i);
+  return diff === 0;
 }
 
 export default {
@@ -24,11 +39,13 @@ export default {
     const url = new URL(req.url);
 
     if (url.pathname === "/" || url.pathname === "/probes") {
+      if (!authorized(req, env)) return json({ error: "unauthorized" }, 401);
       return json({ probes: Object.keys(probes) });
     }
 
     const match = url.pathname.match(/^\/probe\/([A-Z0-9-]+)$/);
     if (!match) return json({ error: "not_found" }, 404);
+    if (!authorized(req, env)) return json({ error: "unauthorized" }, 401);
 
     const testId = match[1]!;
     const probe = probes[testId];
@@ -45,7 +62,6 @@ export default {
           test_id: testId,
           error: "probe_threw",
           message: err instanceof Error ? err.message : String(err),
-          stack: err instanceof Error ? err.stack : undefined,
         },
         500,
       );

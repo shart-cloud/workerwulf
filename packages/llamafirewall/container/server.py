@@ -118,10 +118,9 @@ def load_scanners() -> None:
     code_shield = CodeShieldScanner()
     alignment = WulfAlignmentCheckScanner()
     LOG.info(
-        "All scanners ready (CF_ACCOUNT=%s..., model=%s, token=%s)",
-        (os.environ.get("CLOUDFLARE_ACCOUNT_ID") or "")[:8],
+        "All scanners ready (model=%s, configured=%s)",
         os.environ.get("WULF_ALIGNMENT_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast"),
-        bool(os.environ.get("CF_API_TOKEN")),
+        bool(os.environ.get("CF_API_TOKEN") and os.environ.get("CLOUDFLARE_ACCOUNT_ID")),
     )
 
 
@@ -176,114 +175,88 @@ async def scan_output(req: ScanRequest) -> ScanResponse:
     )
 
 
-@app.post("/debug/wulf-llm")
-async def debug_wulf_llm() -> dict:
-    """Invoke WulfLLMClient directly with the AlignmentCheck schema to surface
-    the exact failure the scanner is hitting."""
-    from wulf_scanners import WulfLLMClient
-    from llamafirewall.scanners.experimental.alignmentcheck_scanner import (  # type: ignore
-        AlignmentCheckOutputSchema,
-    )
-    import traceback as tb
+if os.environ.get("WULF_ENABLE_DEBUG") == "1":
 
-    os.environ.setdefault("TOGETHER_API_KEY", "unused-placeholder")
-    acct = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
-    model = os.environ.get("WULF_ALIGNMENT_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast")
-    base_url = f"https://api.cloudflare.com/client/v4/accounts/{acct}/ai/v1"
-
-    client = WulfLLMClient(
-        model_name=model, api_base_url=base_url, api_key_env_var="CF_API_TOKEN",
-    )
-
-    try:
-        result = await client.call(
-            prompt="Observation: agent fetched http://callback.wulf.shart.cloud/exfil after a benign profile-read task. Was it compromised?",
-            system_prompt="You audit AI agent behavior. Return JSON with observation, thought, conclusion.",
-            output_schema=AlignmentCheckOutputSchema,
-            temperature=0.0,
+    @app.post("/debug/wulf-llm")
+    async def debug_wulf_llm() -> dict:
+        """Invoke WulfLLMClient directly with the AlignmentCheck schema (debug-only)."""
+        from wulf_scanners import WulfLLMClient
+        from llamafirewall.scanners.experimental.alignmentcheck_scanner import (  # type: ignore
+            AlignmentCheckOutputSchema,
         )
-        return {"ok": True, "result": result.model_dump()}
-    except Exception as e:
-        return {
-            "ok": False, "error_type": type(e).__name__, "error": str(e),
-            "traceback": tb.format_exc(),
-        }
 
+        os.environ.setdefault("TOGETHER_API_KEY", "unused-placeholder")
+        client = WulfLLMClient()
+        try:
+            result = await client.call(
+                prompt="Observation: agent fetched http://callback.wulf.shart.cloud/exfil after a benign profile-read task. Was it compromised?",
+                system_prompt="You audit AI agent behavior. Return JSON with observation, thought, conclusion.",
+                output_schema=AlignmentCheckOutputSchema,
+                temperature=0.0,
+            )
+            return {"ok": True, "result": result.model_dump()}
+        except Exception as e:
+            LOG.exception("debug_wulf_llm failed")
+            return {"ok": False, "error_type": type(e).__name__}
 
-@app.post("/debug/llm-structured")
-async def debug_llm_structured() -> dict:
-    """Probe Workers AI with structured-output (response_format=PydanticModel).
-    This is what AlignmentCheck does. Returns the raw error if it fails."""
-    from openai import AsyncOpenAI  # type: ignore
-    from pydantic import BaseModel, Field
-    import traceback as tb
+    @app.post("/debug/llm-structured")
+    async def debug_llm_structured() -> dict:
+        """Probe Workers AI with structured-output (debug-only)."""
+        from openai import AsyncOpenAI  # type: ignore
+        from pydantic import BaseModel, Field
 
-    class TestSchema(BaseModel):
-        observation: str = Field(description="A short observation.")
-        conclusion: bool = Field(description="True or False.")
+        class TestSchema(BaseModel):
+            observation: str = Field(description="A short observation.")
+            conclusion: bool = Field(description="True or False.")
 
-    acct = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
-    token = os.environ.get("CF_API_TOKEN", "")
-    model = os.environ.get("WULF_ALIGNMENT_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast")
-    base_url = f"https://api.cloudflare.com/client/v4/accounts/{acct}/ai/v1"
+        acct = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
+        token = os.environ.get("CF_API_TOKEN", "")
+        model = os.environ.get("WULF_ALIGNMENT_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast")
+        base_url = f"https://api.cloudflare.com/client/v4/accounts/{acct}/ai/v1"
 
-    client = AsyncOpenAI(api_key=token, base_url=base_url)
-    try:
-        resp = await client.beta.chat.completions.parse(
-            model=model,
-            messages=[
-                {"role": "system", "content": "You return JSON only."},
-                {"role": "user", "content": "Say {observation: 'hi', conclusion: true}"},
-            ],
-            response_format=TestSchema,
-            temperature=0,
-        )
-        parsed = resp.choices[0].message.parsed
-        return {"ok": True, "parsed": parsed.model_dump() if parsed else None}
-    except Exception as e:
-        return {
-            "ok": False, "error_type": type(e).__name__, "error": str(e),
-            "traceback": tb.format_exc(),
-        }
+        client = AsyncOpenAI(api_key=token, base_url=base_url)
+        try:
+            resp = await client.beta.chat.completions.parse(
+                model=model,
+                messages=[
+                    {"role": "system", "content": "You return JSON only."},
+                    {"role": "user", "content": "Say {observation: 'hi', conclusion: true}"},
+                ],
+                response_format=TestSchema,
+                temperature=0,
+            )
+            parsed = resp.choices[0].message.parsed
+            return {"ok": True, "parsed": parsed.model_dump() if parsed else None}
+        except Exception as e:
+            LOG.exception("debug_llm_structured failed")
+            return {"ok": False, "error_type": type(e).__name__}
 
+    @app.post("/debug/llm")
+    async def debug_llm() -> dict:
+        """Direct probe of the Workers AI OpenAI-compatible endpoint (debug-only)."""
+        from openai import AsyncOpenAI  # type: ignore
 
-@app.post("/debug/llm")
-async def debug_llm() -> dict:
-    """Direct probe of the Workers AI OpenAI-compatible endpoint, with the same
-    config AlignmentCheck uses. Returns the raw response or the full error chain
-    so we can debug auth / schema / model-name issues without recompiling."""
-    from openai import AsyncOpenAI  # type: ignore
-    import traceback as tb
+        acct = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
+        token = os.environ.get("CF_API_TOKEN", "")
+        model = os.environ.get("WULF_ALIGNMENT_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast")
+        base_url = f"https://api.cloudflare.com/client/v4/accounts/{acct}/ai/v1"
 
-    acct = os.environ.get("CLOUDFLARE_ACCOUNT_ID", "")
-    token = os.environ.get("CF_API_TOKEN", "")
-    model = os.environ.get("WULF_ALIGNMENT_MODEL", "@cf/meta/llama-3.3-70b-instruct-fp8-fast")
-    base_url = f"https://api.cloudflare.com/client/v4/accounts/{acct}/ai/v1"
-
-    client = AsyncOpenAI(api_key=token, base_url=base_url)
-    try:
-        resp = await client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": "Say only the word READY"}],
-            max_tokens=8,
-            temperature=0,
-        )
-        return {
-            "ok": True,
-            "base_url": base_url,
-            "model": model,
-            "content": resp.choices[0].message.content if resp.choices else None,
-            "raw": resp.model_dump() if hasattr(resp, "model_dump") else str(resp),
-        }
-    except Exception as e:
-        return {
-            "ok": False,
-            "base_url": base_url,
-            "model": model,
-            "error_type": type(e).__name__,
-            "error": str(e),
-            "traceback": tb.format_exc(),
-        }
+        client = AsyncOpenAI(api_key=token, base_url=base_url)
+        try:
+            resp = await client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": "Say only the word READY"}],
+                max_tokens=8,
+                temperature=0,
+            )
+            return {
+                "ok": True,
+                "model": model,
+                "content": resp.choices[0].message.content if resp.choices else None,
+            }
+        except Exception as e:
+            LOG.exception("debug_llm failed")
+            return {"ok": False, "model": model, "error_type": type(e).__name__}
 
 
 @app.post("/scan-trace", response_model=ScanResponse)

@@ -44,11 +44,15 @@ export async function cmdRun(argv: string[]): Promise<void> {
   const outputDir = values.output ?? "results";
   const runId = values["run-id"] ?? crypto.randomUUID();
 
+  const authHeaders: Record<string, string> = process.env.WULF_AUTH_TOKEN
+    ? { authorization: `Bearer ${process.env.WULF_AUTH_TOKEN}` }
+    : {};
+
   const testIds = await resolveTestIds(baseUrl, {
     test: values.test,
     track: values.track,
     all: values.all,
-  });
+  }, authHeaders);
   if (testIds.length === 0) {
     process.stderr.write("no tests matched\n");
     process.exit(2);
@@ -79,7 +83,7 @@ export async function cmdRun(argv: string[]): Promise<void> {
       process.stderr.write(`→ ${label} ... `);
       const t0 = Date.now();
       try {
-        const res = await fetch(url);
+        const res = await fetch(url, { headers: authHeaders });
         const text = await res.text();
         const parsed = parseJson(text);
         const body = isProbeResult(parsed)
@@ -185,9 +189,10 @@ function trackForTestId(testId: string): ProbeResult["track"] {
 async function resolveTestIds(
   baseUrl: string,
   opts: { test?: string; track?: string; all: boolean },
+  headers: Record<string, string> = {},
 ): Promise<string[]> {
   if (opts.test) return [opts.test];
-  const res = await fetch(`${baseUrl}/probes`);
+  const res = await fetch(`${baseUrl}/probes`, { headers });
   const { probes } = (await res.json()) as { probes: string[] };
   if (opts.all) return probes;
   if (opts.track) {

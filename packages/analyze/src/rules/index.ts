@@ -9,6 +9,9 @@ import "./config/bindings.js";
 import "./config/egress.js";
 import "./config/wfp.js";
 import "./config/supply-chain.js";
+import "./config/rivet.js";
+import "./config/workers-cache.js";
+import "./config/containers.js";
 
 // Source rules (§8) — families A–G
 import "./source/secrets.js"; // Family A
@@ -22,6 +25,9 @@ import "./source/request.js"; // Worker request layer
 import "./source/cache.js"; // Cache API abuse
 import "./source/handlers.js"; // Non-fetch handlers
 import "./source/service-bindings.js"; // Service binding auth context
+import "./source/rivet.js"; // Rivet / OpenOrange + Dynamic Worker loader rules
+import "./source/workers-cache.js"; // Wave 5 declarative Workers Cache rules
+import "./source/containers.js"; // Wave 6 Cloudflare Containers exec() rules
 
 // Account rules (§11.2, §12) — live scan
 import "./account/least-priv.js";
